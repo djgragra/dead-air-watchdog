@@ -294,3 +294,22 @@ test('start refuses when no input is usable; invalid URLs and disabled inputs ar
   assert.equal(engineCalls.length, 0);
   assert.deepEqual(m.status().inputs.map((i) => i.state), ['idle', 'idle']);
 });
+
+test('engine events: fault and recovery are routed by input id (an input must not stay offline after the stream is back)', async () => {
+  const { engineHandlers } = await import('../src/engine-events.js');
+  const { m, advance, sent } = setup({ inputs: [INPUT_A, INPUT_B] });
+  const h = engineHandlers(m);
+  m.start();
+  advance(3000, -20);
+  h['engine:fault']('a', 'stream-error'); // what engine-preload sends: (id, reason)
+  advance(1000, -20); // the fault makes the input count as offline even while reports still arrive
+  let st = m.status();
+  assert.deepEqual(st.inputs.map((i) => [i.state, i.fault]), [['counting', 'stream-error'], ['ok', null]]);
+  h['engine:ok']('a'); // the stream is back
+  st = m.status();
+  assert.equal(st.inputs[0].fault, null);
+  advance(25_000, -20);
+  assert.equal(m.status().overall, 'ok');
+  assert.equal(sent.length, 0, 'a transient fault must not leave a permanent dead-air alarm');
+  h['engine:levels']({ a: { rms: [-20, -20], peak: [-20, -20] } }); // does not throw for a partial batch
+});

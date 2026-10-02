@@ -9,6 +9,7 @@ import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.j
 import { checkForUpdate, downloadInstaller } from './src/updater.js';
 import { createHeartbeat } from './src/heartbeat.js';
 import { createLogos } from './src/logos.js';
+import { engineHandlers } from './src/engine-events.js';
 import { aggregateDeadAir } from './src/core/stats.js';
 import { toCsv, toJson } from './src/core/export.js';
 import { formatDuration } from './src/core/format.js';
@@ -474,9 +475,7 @@ app.whenReady().then(() => {
     if (pendingEngineList) engineWindow.webContents.send('engine:sync', pendingEngineList);
     applySound();
   });
-  fromEngine('engine:levels', (r) => monitor.onLevels(r));
-  fromEngine('engine:fault', (reason) => monitor.onFault(reason));
-  fromEngine('engine:ok', () => monitor.onOk());
+  for (const [channel, handler] of Object.entries(engineHandlers(monitor))) fromEngine(channel, handler);
   ipcMain.on('engine:rpc-result', (e, msg) => {
     if (!engineWindow || e.sender !== engineWindow.webContents) return;
     const w = rpcWaiting.get(msg.id);
