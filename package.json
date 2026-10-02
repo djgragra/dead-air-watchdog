@@ -1,0 +1,79 @@
+{
+  "name": "dead-air-watchdog",
+  "productName": "Dead Air Watchdog",
+  "version": "26.10.1",
+  "description": "Monitors an audio input or an Icecast/Shoutcast stream and alerts by email and Telegram when it stays silent",
+  "main": "main.js",
+  "type": "module",
+  "author": "Graziano Melzi <hello@onairgarage.com> (https://onairgarage.com)",
+  "homepage": "https://onairgarage.com/tools/dead-air-watchdog/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/djgragra/dead-air-watchdog.git"
+  },
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test dev/*.test.js",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
+  },
+  "dependencies": {
+    "nodemailer": "^10.0.10"
+  },
+  "devDependencies": {
+    "electron": "^44.4.3",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.onairgarage.deadairwatchdog",
+    "productName": "Dead Air Watchdog",
+    "publish": null,
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "engine-preload.cjs",
+      "src/**/*",
+      "renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "assets/icon.ico",
+      "artifactName": "Dead-Air-Watchdog-Setup-${version}.exe"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.utilities",
+      "artifactName": "Dead-Air-Watchdog-${version}-${arch}.dmg",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Dead Air Watchdog measures the level of the selected audio input to detect silence. Audio is never recorded, saved or sent anywhere."
+      }
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/linux-icons",
+      "category": "Utility",
+      "artifactName": "Dead-Air-Watchdog-${version}.AppImage"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true,
+      "shortcutName": "Dead Air Watchdog"
+    }
+  }
+}
