@@ -173,6 +173,7 @@
             <label class="field"><span data-i18n="set.mail.from">From address</span><input type="text" id="mFrom" spellcheck="false" placeholder="watchdog@example.org" /></label>
             <label class="field"><span data-i18n="set.mail.to">To (separate several with commas)</span><input type="text" id="mTo" spellcheck="false" placeholder="engineer@example.org" /></label>
           </div>
+          <p class="warn hidden" id="mToBad" role="status"></p>
           <label class="check"><input type="checkbox" id="mSecure" /><span data-i18n="set.mail.secure">Use TLS from the start (usually port 465)</span></label>
           <div class="row"><button type="button" class="btn btn--small" id="mTest" data-i18n="set.test">Send test</button><span class="testres" id="mRes" role="status"></span></div>
 
@@ -212,8 +213,19 @@
           </div>
         </fieldset>
 
+        <fieldset class="card" id="bkCard">
+          <legend data-i18n="bk.title">Configuration backup</legend>
+          <p class="hint" data-i18n="bk.note"></p>
+          <label class="check"><input type="checkbox" id="bkSecrets" /><span data-i18n="bk.secrets">Include passwords and tokens</span></label>
+          <p class="warn warn--red hidden" id="bkWarn" role="alert" data-i18n="bk.warn"></p>
+          <div class="row"><button type="button" class="btn btn--small" id="bkExport" data-i18n="bk.export">Export</button><button type="button" class="btn btn--small" id="bkImport" data-i18n="bk.import">Import</button><span class="testres" id="bkRes" role="status"></span></div>
+          <div class="hidden" id="bkMissing"></div>
+        </fieldset>
+
         <fieldset class="card" id="updCard">
           <legend data-i18n="upd.title">Updates</legend>
+          <label class="check"><input type="checkbox" id="uAlert" /><span data-i18n="upd.alert">Tell me by email or Telegram when a new version is out (once per version)</span></label>
+          <p class="hint" data-i18n="upd.alertHint"></p>
           <p id="updCurrent"></p>
           <div class="row"><button type="button" class="btn btn--small" id="updCheck" data-i18n="upd.check">Check now</button><span class="testres" id="updRes" role="status"></span></div>
           <div class="row hidden" id="updActions"><button type="button" class="btn btn--small btn--primary" id="updDownload" data-i18n="upd.download">Download installer</button><button type="button" class="btn btn--small" id="updPage" data-i18n="upd.page">Open release page</button><button type="button" class="btn btn--small hidden" id="updReveal" data-i18n="upd.reveal">Show file</button></div>
@@ -239,6 +251,7 @@
         <h3 data-i18n="help.hAlerts"></h3><p data-i18n="help.pAlerts"></p>
         <h3 data-i18n="help.hTg"></h3><ol><li data-i18n="help.tg1"></li><li data-i18n="help.tg2"></li><li data-i18n="help.tg3"></li></ol>
         <h3 data-i18n="help.hMail"></h3><p data-i18n="help.pMail"></p>
+        <h3 data-i18n="help.hBackup"></h3><p data-i18n="help.pBackup"></p>
         <h3 data-i18n="help.hRun"></h3><p data-i18n="help.pRun"></p>
         <h3 data-i18n="help.hHb"></h3><p data-i18n="help.pHb"></p>
         <h3 data-i18n="help.hSnd"></h3><p data-i18n="help.pSnd"></p>
@@ -256,6 +269,14 @@
   <h2 id="micTitle" data-i18n="mic.title"></h2>
   <p data-i18n="mic.p1"></p><p data-i18n="mic.p2"></p><p data-i18n="mic.p3"></p>
   <div class="dlg__actions"><button type="button" class="btn btn--ghost" id="micCancel" data-i18n="mic.cancel">Not now</button><button type="button" class="btn btn--primary" id="micOk" data-i18n="mic.ok">Continue</button></div>
+</dialog>
+
+<dialog id="bkDlg" aria-labelledby="bkDlgTitle">
+  <h2 id="bkDlgTitle" data-i18n="bk.dlgTitle"></h2>
+  <p data-i18n="bk.dlgText"></p>
+  <label class="check"><input type="radio" name="bkMode" value="replace" checked /><span data-i18n="bk.modeReplace">Replace everything</span></label>
+  <label class="check"><input type="radio" name="bkMode" value="add" /><span data-i18n="bk.modeAdd">Add only the inputs I do not have</span></label>
+  <div class="dlg__actions"><button type="button" class="btn btn--ghost" id="bkDlgNo" data-i18n="log.cancel">Cancel</button><button type="button" class="btn btn--primary" id="bkDlgYes" data-i18n="bk.choose">Choose file…</button></div>
 </dialog>
 
 <dialog id="confirmDlg" aria-labelledby="confirmTitle">

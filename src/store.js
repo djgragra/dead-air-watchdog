@@ -4,6 +4,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { mapSecrets } from './secrets.js';
+import { parseAddresses } from './addresses.js';
 
 export const MAX_INPUTS = 32;
 
@@ -32,8 +34,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
     desktop: true,
     reminderMin: 0, // 0 = no reminders while the alarm lasts
     sound: { enabled: false, volume: 0.6 }, // audible alarm on this computer while dead air lasts
-    email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', to: '' },
-    telegram: { enabled: false, botToken: '', recipients: [] } // recipients: [{ chatId, note }]
+    email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: [] }, // recipients: [address], all sent in Bcc
+    telegram: { enabled: false, botToken: '', recipients: [] }, // recipients: [{ chatId, note }]
+    updateAlert: true // tell by email / Telegram, once per version, that a new version is out
   },
   general: {
     startOnBoot: true,
@@ -48,14 +51,6 @@ export const DEFAULT_SETTINGS = Object.freeze({
   micExplained: false, // the permission explanation was shown and accepted
   closeHintShown: false
 });
-
-const SECRET_PATHS = [
-  ['notifications', 'email', 'pass'],
-  ['notifications', 'telegram', 'botToken'],
-  ['heartbeat', 'url'] // ping URLs usually carry a secret token
-];
-// inputs[].streamUrl may carry credentials (user:pass@host) and is sealed as well
-const PREFIX = 'enc:v1:';
 
 // GitHub "owner/repo": owner letters, digits, hyphens; repo letters, digits, "_", "-", "." (not "." or "..").
 export const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9_][\w.-]{0,99}$/;
@@ -126,7 +121,13 @@ export function sanitizeSettings(s) {
   out.heartbeat.enabled = !!out.heartbeat.enabled;
   out.heartbeat.url = String(out.heartbeat.url || '').trim().slice(0, 2000);
   out.heartbeat.intervalMin = Math.round(clamp(out.heartbeat.intervalMin, 1, 60, 5));
-  out.notifications.email.port = Math.round(clamp(out.notifications.email.port, 1, 65535, 587));
+  const em = out.notifications.email;
+  em.port = Math.round(clamp(em.port, 1, 65535, 587));
+  em.secure = !!em.secure;
+  // settings of versions up to 26.10.1 had one text field "to": it becomes the list of recipients
+  em.recipients = parseAddresses([...(Array.isArray(em.recipients) ? em.recipients : [em.recipients]), em.to]).valid;
+  delete em.to;
+  out.notifications.updateAlert = out.notifications.updateAlert !== false;
   const rec = Array.isArray(out.notifications.telegram.recipients) ? out.notifications.telegram.recipients : [];
   out.notifications.telegram.recipients = rec
     .map((r) => ({ chatId: String(r?.chatId ?? '').trim(), note: String(r?.note ?? '').trim().slice(0, 80) }))
@@ -137,18 +138,6 @@ export function sanitizeSettings(s) {
   delete out.input;
   delete out.detection;
   return out;
-}
-
-function mapSecrets(settings, fn) {
-  const s = structuredClone(settings);
-  for (const p of SECRET_PATHS) {
-    let o = s;
-    for (let i = 0; i < p.length - 1; i++) o = o?.[p[i]];
-    if (o && typeof o[p.at(-1)] === 'string' && o[p.at(-1)]) o[p.at(-1)] = fn(o[p.at(-1)]);
-  }
-  for (const i of Array.isArray(s.inputs) ? s.inputs : []) if (i && typeof i.streamUrl === 'string' && i.streamUrl) i.streamUrl = fn(i.streamUrl);
-  if (isObj(s.input) && typeof s.input.streamUrl === 'string' && s.input.streamUrl) s.input.streamUrl = fn(s.input.streamUrl); // legacy
-  return s;
 }
 
 export function createStore({ file, seal = (v) => v, open = (v) => v, now = Date.now } = {}) {

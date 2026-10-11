@@ -7,6 +7,9 @@ import { createStore } from './src/store.js';
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
 import { checkForUpdate, downloadInstaller } from './src/updater.js';
+import { createAlertState } from './src/alert-state.js';
+import { createUpdateNotice } from './src/update-notice.js';
+import { buildExport, prepareImport, backupFileName, MAX_BACKUP_BYTES } from './src/backup.js';
 import { createHeartbeat } from './src/heartbeat.js';
 import { createLogos } from './src/logos.js';
 import { engineHandlers } from './src/engine-events.js';
@@ -25,6 +28,8 @@ if (!app.requestSingleInstanceLock()) app.quit();
 let store;
 let monitor;
 let dispatcher;
+let updateNotice;
+let alertState;
 let heartbeat;
 let logos;
 let wallBlockerId = null;
@@ -287,12 +292,18 @@ function desktopNotify(kind, d) {
   n.show();
 }
 
+// New version: email / Telegram, once per version and per channel (see src/update-notice.js)
+function announceUpdate() {
+  if (updateInfo?.available) updateNotice?.announce(updateInfo).catch((err) => console.warn(`[update-notice] ${err.message}`));
+}
+
 function checkUpdatesNow(manual) {
   const s = store.getSettings();
   return checkForUpdate({ repo: s.general.updateRepo, current: app.getVersion(), fetchFn: (u, o) => net.fetch(u, o) }).then((r) => {
     if (r.ok && r.available) {
       updateInfo = r;
       sendUi('event:update-available', r);
+      announceUpdate();
     } else if (manual) updateInfo = r.ok ? r : null;
     return r;
   });
@@ -310,8 +321,8 @@ const EXTERNAL_OK = [/^https:\/\/onairgarage\.com(\/|$)/, /^https:\/\/github\.co
 
 function registerIpc() {
   handle('settings:get', () => store.getSettings());
-  handle('settings:update', (patch) => {
-    const next = store.updateSettings(patch);
+  // everything that has to follow a change of the settings (also used by the backup import)
+  function settingsChanged(next) {
     logos.prune(next.inputs.map((i) => i.id)); // logos of removed inputs
     applyGeneralSettings(next);
     monitor.syncInputs(); // inputs added, removed or edited while monitoring
@@ -323,7 +334,38 @@ function registerIpc() {
     trayKey = '';
     updateTray(lastStatus);
     sendUi('event:settings-changed', next);
+    announceUpdate(); // a channel switched on now hears about a version it has not been told yet
     return next;
+  }
+  handle('settings:update', (patch) => settingsChanged(store.updateSettings(patch)));
+
+  // ---- configuration backup ----
+  handle('backup:export', async (includeSecrets) => {
+    includeSecrets = includeSecrets === true;
+    const r = await dialog.showSaveDialog(mainWindow, { defaultPath: path.join(app.getPath('documents'), backupFileName()), filters: [{ name: 'JSON', extensions: ['json'] }] });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    try {
+      const file = buildExport(store.getSettings(), { includeSecrets });
+      fs.writeFileSync(r.filePath, JSON.stringify(file, null, 2), { mode: includeSecrets ? 0o600 : 0o644 });
+      if (includeSecrets) fs.chmodSync(r.filePath, 0o600); // also when the file already existed
+      return { ok: true, file: r.filePath, includesSecrets: includeSecrets, inputs: file.inputs.length };
+    } catch (err) {
+      return { ok: false, error: String(err.message).slice(0, 300) };
+    }
+  });
+  handle('backup:import', async (mode) => {
+    mode = mode === 'add' ? 'add' : 'replace';
+    const r = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], filters: [{ name: 'JSON', extensions: ['json'] }] });
+    if (r.canceled || !r.filePaths?.[0]) return { ok: false, canceled: true };
+    try {
+      if (fs.statSync(r.filePaths[0]).size > MAX_BACKUP_BYTES) return { ok: false, error: 'too-big' };
+      const plan = prepareImport(fs.readFileSync(r.filePaths[0], 'utf8'), store.getSettings(), { mode });
+      if (!plan.ok) return plan;
+      settingsChanged(store.updateSettings(plan.settings));
+      return { ok: true, mode, missing: plan.missing, added: plan.added };
+    } catch (err) {
+      return { ok: false, error: String(err.message).slice(0, 300) };
+    }
   });
 
   handle('monitor:start', startMonitoring);
@@ -436,6 +478,22 @@ app.whenReady().then(() => {
   store.flush();
 
   logos = createLogos(path.join(app.getPath('userData'), 'logos'));
+  alertState = createAlertState({ file: path.join(app.getPath('userData'), 'alert-state.json') });
+  updateNotice = createUpdateNotice({
+    getSettings: () => store.getSettings(),
+    alertState,
+    send: (channel, subject, text) => {
+      const st = store.getSettings();
+      return channel === 'email' ? sendEmail({ ...st.notifications.email, enabled: true }, subject, text, st.language) : sendTelegram({ ...st.notifications.telegram, enabled: true }, text, st.language, (u, o) => net.fetch(u, o));
+    },
+    notifyDesktop: (body) => {
+      if (!Notification.isSupported()) return;
+      const n = new Notification({ title: 'Dead Air Watchdog', body });
+      n.on('click', showWindow);
+      n.show();
+    },
+    log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[update-notice] ${m}`)
+  });
   dispatcher = createDispatcher({ getSettings: () => store.getSettings(), log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[notify] ${m}`) });
   monitor = createMonitor({
     store,

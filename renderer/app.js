@@ -2,6 +2,7 @@
 // it talks to the main process through window.api (see preload.cjs).
 // © 2026 Graziano Melzi · OnAir Garage — MIT License
 import { LANGS, makeT } from './i18n.js';
+import { parseAddresses } from '../src/addresses.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 
 const api = window.api;
@@ -747,7 +748,9 @@ function fillForm() {
   $('mUser').value = m.user;
   $('mPass').value = m.pass;
   $('mFrom').value = m.from;
-  $('mTo').value = m.to;
+  $('mTo').value = m.recipients.join(', ');
+  $('mToBad').classList.add('hidden');
+  $('uAlert').checked = s.notifications.updateAlert;
   const tg = s.notifications.telegram;
   $('tEnable').checked = tg.enabled;
   $('tToken').value = tg.botToken;
@@ -774,8 +777,9 @@ function readForm() {
       desktop: $('nDesktop').checked,
       reminderMin: Number($('nReminder').value) || 0,
       sound: { enabled: $('nSound').checked, volume: (Number($('nVol').value) || 60) / 100 },
-      email: { enabled: $('mEnable').checked, host: $('mHost').value.trim(), port: Number($('mPort').value) || 587, secure: $('mSecure').checked, user: $('mUser').value.trim(), pass: $('mPass').value, from: $('mFrom').value.trim(), to: $('mTo').value.trim() },
-      telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients }
+      email: { enabled: $('mEnable').checked, host: $('mHost').value.trim(), port: Number($('mPort').value) || 587, secure: $('mSecure').checked, user: $('mUser').value.trim(), pass: $('mPass').value, from: $('mFrom').value.trim(), recipients: parseAddresses($('mTo').value).valid },
+      telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients },
+      updateAlert: $('uAlert').checked
     },
     heartbeat: { enabled: $('hEnable').checked, url: $('hUrl').value.trim(), intervalMin: Number($('hMin').value) || 5 },
     display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked },
@@ -783,8 +787,18 @@ function readForm() {
   };
 }
 
+// Shows the recipients as they will be used and says which typed addresses were left out.
+function normaliseRecipients() {
+  const { valid, dropped } = parseAddresses($('mTo').value);
+  $('mTo').value = valid.join(', ');
+  const bad = $('mToBad');
+  bad.textContent = dropped.length ? t('set.mail.dropped', { list: dropped.join(', ') }) : '';
+  bad.classList.toggle('hidden', !dropped.length);
+}
+
 async function saveForm(e) {
   e?.preventDefault();
+  normaliseRecipients();
   const patch = readForm();
   let bad = false;
   for (const card of $('inputsList').querySelectorAll('.input')) {
@@ -862,6 +876,7 @@ function askMic() {
 }
 
 async function testChannel(channel) {
+  if (channel === 'email') normaliseRecipients();
   const form = readForm();
   const out = $(channel === 'email' ? 'mRes' : 'tRes');
   out.className = 'testres';
@@ -869,6 +884,67 @@ async function testChannel(channel) {
   const r = await api.notifications.test(channel, channel === 'email' ? form.notifications.email : form.notifications.telegram);
   out.textContent = r.ok ? t('set.test.ok') : t('set.test.fail', { error: r.error });
   out.classList.add(r.ok ? 'is-ok' : 'is-fail');
+}
+
+// ---- configuration backup ----------------------------------------------------------------------------
+function showBackupResult(text, ok) {
+  const out = $('bkRes');
+  out.className = 'testres ' + (ok ? 'is-ok' : 'is-fail');
+  out.textContent = text;
+}
+
+function renderMissing(list) {
+  const box = $('bkMissing');
+  box.replaceChildren();
+  box.classList.toggle('hidden', !list?.length);
+  if (!list?.length) return;
+  box.className = 'missing';
+  const label = (m) => (m.kind === 'input' ? t('bk.missing.input', { name: m.name || '?' }) : t(`bk.missing.${m.kind.split('.')[0]}`));
+  const ul = el('ul');
+  for (const m of list) ul.appendChild(el('li', '', label(m)));
+  box.append(el('strong', '', t('bk.missingTitle')), ul);
+}
+
+function askImportMode() {
+  return new Promise((resolve) => {
+    const dlg = $('bkDlg');
+    const done = (v) => {
+      dlg.close();
+      $('bkDlgYes').removeEventListener('click', yes);
+      $('bkDlgNo').removeEventListener('click', no);
+      dlg.removeEventListener('cancel', no);
+      resolve(v);
+    };
+    const yes = () => done(dlg.querySelector('input[name="bkMode"]:checked')?.value || 'replace');
+    const no = () => done(null);
+    $('bkDlgYes').addEventListener('click', yes);
+    $('bkDlgNo').addEventListener('click', no);
+    dlg.addEventListener('cancel', no);
+    dlg.showModal();
+  });
+}
+
+async function exportBackup() {
+  renderMissing([]);
+  if (dirty) return showBackupResult(t('bk.saveFirst'), false);
+  const r = await api.backup.export($('bkSecrets').checked);
+  if (r.canceled) return showBackupResult('', true);
+  showBackupResult(r.ok ? t('bk.exported', { file: r.file }) : t('bk.failed', { error: r.error }), r.ok);
+}
+
+async function importBackup() {
+  renderMissing([]);
+  if (dirty) return showBackupResult(t('bk.saveFirst'), false);
+  const mode = await askImportMode();
+  if (!mode) return;
+  const r = await api.backup.import(mode);
+  if (r.canceled) return showBackupResult('', true);
+  if (!r.ok) return showBackupResult(r.error in { invalid: 1, 'wrong-app': 1, 'too-big': 1 } ? t(`bk.err.${r.error}`) : t('bk.failed', { error: r.error }), false);
+  settings = await api.settings.get();
+  fillForm();
+  renderAll();
+  showBackupResult(t('bk.imported') + (r.added != null ? ' ' + t('bk.importedAdd', { n: r.added }) : ''), true);
+  renderMissing(r.missing);
 }
 
 // ---- updates ------------------------------------------------------------------------------------------
@@ -1021,13 +1097,16 @@ function wire() {
   const form = $('settingsForm');
   form.addEventListener('submit', saveForm);
   form.addEventListener('input', (e) => {
+    if (e.target.closest('#bkCard')) return; // the backup box is not a setting
     onInputsEvent(e);
     setDirty(true);
   });
   form.addEventListener('change', (e) => {
+    if (e.target.closest('#bkCard')) return;
     onInputsEvent(e);
     setDirty(true);
   });
+  $('mTo').addEventListener('change', normaliseRecipients);
   $('inputsList').addEventListener('click', onInputsClick);
   $('addStream').addEventListener('click', () => addInput('stream'));
   $('addDevice').addEventListener('click', () => {
@@ -1056,6 +1135,9 @@ function wire() {
     out.textContent = r.ok ? t('set.hb.ok') : t('set.hb.fail', { error: r.error });
     out.classList.add(r.ok ? 'is-ok' : 'is-fail');
   });
+  $('bkSecrets').addEventListener('change', () => $('bkWarn').classList.toggle('hidden', !$('bkSecrets').checked));
+  $('bkExport').addEventListener('click', exportBackup);
+  $('bkImport').addEventListener('click', importBackup);
   $('mTest').addEventListener('click', () => testChannel('email'));
   $('tTest').addEventListener('click', () => testChannel('telegram'));
 

@@ -1,33 +1,50 @@
 // Alert delivery: email (SMTP via nodemailer) and Telegram (Bot API), with retry.
 // Credentials come from the user's settings only; nothing is hard-coded.
 import { t } from './messages.js';
+import { parseAddresses } from './addresses.js';
 
 const TG_PREFIX = '[Dead Air Watchdog]';
 
 // Telegram caps messages at 4096 characters; alerts are far shorter, this is only a guard.
 const clip = (s) => (s.length > 4000 ? s.slice(0, 3997) + '…' : s);
 
+export const TELEGRAM_TOKEN_RE = /^\d+:[\w-]{20,}$/;
+
 export async function sendEmail(cfg, subject, text, lang = 'en', transportFactory = null) {
   if (!cfg?.enabled) return;
-  if (!cfg.host || !cfg.to) throw new Error(t(lang, 'err.emailIncomplete'));
+  const to = parseAddresses(cfg.recipients ?? cfg.to).valid;
+  if (!cfg.host || !to.length || !(cfg.from || cfg.user)) throw new Error(t(lang, 'err.emailIncomplete'));
   // loaded on first use: keeps start-up light and lets the tests run without the package
   const create = transportFactory || (await import('nodemailer')).default.createTransport;
   const transporter = create({
     host: cfg.host,
     port: Number(cfg.port) || 587,
-    secure: !!cfg.secure,
+    secure: !!cfg.secure, // true = TLS from the start (usually port 465); false = STARTTLS
+    requireTLS: !cfg.secure && !!cfg.user, // with a user name the password never travels in clear text
     auth: cfg.user ? { user: cfg.user, pass: cfg.pass } : undefined,
     connectionTimeout: 15_000,
     greetingTimeout: 15_000,
     socketTimeout: 20_000
   });
-  await transporter.sendMail({ from: cfg.from || cfg.user, to: cfg.to, subject, text });
+  try {
+    // one message, all recipients in Bcc: they do not see each other's addresses
+    const info = await transporter.sendMail({ from: cfg.from || cfg.user, to: cfg.from || cfg.user, bcc: to, subject, text });
+    const rejected = info?.rejected || [];
+    if (rejected.length) throw new Error(`${rejected.join(', ')}: ${t(lang, 'err.emailRejected')}`);
+  } catch (err) {
+    // the password never shows; very short ones are not masked or the text would be unreadable
+    const msg = cfg.pass && cfg.pass.length >= 4 ? String(err.message).split(cfg.pass).join('***') : String(err.message);
+    throw new Error(t(lang, 'err.emailFailed') + msg);
+  } finally {
+    transporter.close?.();
+  }
 }
 
 export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.fetch) {
   if (!cfg?.enabled) return;
   const recipients = (cfg.recipients || []).filter((r) => String(r?.chatId || '').trim());
   if (!cfg.botToken || !recipients.length) throw new Error(t(lang, 'err.telegramIncomplete'));
+  if (!TELEGRAM_TOKEN_RE.test(cfg.botToken)) throw new Error(t(lang, 'err.telegramToken'));
   // the bot may be shared with other programs: always say who is writing
   const body = clip(text.startsWith(TG_PREFIX) ? text : `${TG_PREFIX} ${text}`);
   const failures = [];
@@ -36,7 +53,7 @@ export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.
       const res = await fetchFn(`https://api.telegram.org/bot${cfg.botToken}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: String(r.chatId).trim(), text: body }),
+        body: JSON.stringify({ chat_id: String(r.chatId).trim(), text: body, link_preview_options: { is_disabled: true } }),
         signal: AbortSignal.timeout(15_000)
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
