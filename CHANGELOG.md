@@ -1,5 +1,15 @@
 # Changelog
 
+## 26.10.3 — 2026-10-11
+
+Thanks to Richard, who tried 26.10.2 on a real set of Icecast mounts and wrote to us with what did not work and what he missed: this release is made of his notes.
+
+- **Long names in the wall display.** Mount and station names are no longer cut: they wrap on two lines and, in the new automatic mode, shrink until they fit; the same goes for the big line at the top ("DEAD AIR · name"). Settings → General → "Names in the wall display" also offers fixed sizes (large, medium, small). The dashboard tiles show the full name as a tooltip.
+- **Order of the inputs.** Every input in Settings has ▲ ▼ buttons to move it up or down; the dashboard and the wall display follow the same order once you save.
+- **Alerts that fail are no longer silent.** If an alert cannot be delivered (by email or Telegram) the dashboard now says so, with the reason from the server, and keeps trying as before; the notice goes away at the next delivery. Failures used to be written only in a log that the window never showed.
+- **"Send test" is clearer about what is saved.** The test uses what is on the screen, while real alerts use the saved settings and only when the channel is switched on. When they differ the result now says it ("not saved yet: press Save settings", or "this channel is switched off"). If saving is refused because a field is wrong, the bar says "Not saved" and scrolls to the field.
+- Tests: the whole chain from a stream going silent to the email on the wire (alarm and recovery, everybody in Bcc), the failure report, the order of the inputs and the new setting.
+
 ## 26.10.2 — 2026-10-11
 
 - **Email to several people in one message.** The email settings take several recipients in one field (commas, spaces or new lines); one message is sent with everybody in **Bcc**, so nobody sees the other addresses. Addresses that are not valid or are repeated are left out and the app says which. The old single "To" field is converted at the first start, nothing is lost. If the server refuses an address the error names it.

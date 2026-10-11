@@ -107,3 +107,9 @@ test('display settings are validated', () => {
   assert.equal(sanitizeSettings({ display: { edgeGlow: 'nope', startInWall: 1 } }).display.edgeGlow, 'wall');
   assert.equal(sanitizeSettings({ display: { edgeGlow: 'always', startInWall: 1 } }).display.startInWall, true);
 });
+
+test('wall display name size: default automatic, only the known values are kept', () => {
+  assert.equal(sanitizeSettings({}).display.wallNameSize, 'auto');
+  for (const v of ['auto', 'large', 'medium', 'small']) assert.equal(sanitizeSettings({ display: { wallNameSize: v } }).display.wallNameSize, v);
+  assert.equal(sanitizeSettings({ display: { wallNameSize: 'huge' } }).display.wallNameSize, 'auto');
+});
