@@ -90,6 +90,7 @@ input[type="range"] { flex: 1; min-width: 120px; accent-color: var(--accent); }
 .hint { color: var(--dim); font-size: 12px; margin: 4px 0 8px; }
 .hint--note { font-style: italic; }
 .warn { color: var(--warn); font-size: 13px; margin: 6px 0; }
+.warn--box { border: 1px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin: 0 0 12px; }
 .warn--red { color: var(--err); font-weight: 600; }
 .missing { margin: 8px 0 0; padding: 10px 12px; border: 1px solid var(--warn); border-radius: 8px; font-size: 13px; }
 .missing ul { margin: 6px 0 0 18px; }
@@ -132,6 +133,7 @@ fieldset.card h3 { font-size: 13px; margin: 18px 0 6px; padding-top: 14px; borde
 .testres { font-size: 13px; color: var(--dim); }
 .testres.is-ok { color: var(--ok); }
 .testres.is-fail { color: var(--err); }
+.testres.is-warn { color: var(--warn); }
 .update { display: flex; align-items: center; gap: 12px; padding: 8px 24px; background: var(--accent-dim); border-bottom: 1px solid var(--accent); color: var(--accent-text); }
 
 /* Hero: traffic light + meter */
@@ -294,6 +296,9 @@ dialog p { margin: 8px 0; color: var(--dim); }
 .input__kind { margin-left: auto; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
 .input__body { padding: 4px 14px 12px; border-top: 1px solid var(--border); }
 .input__foot { display: flex; justify-content: flex-end; margin-top: 8px; }
+.input__move { display: inline-flex; gap: 4px; margin-left: 8px; }
+.input__move .btn { min-width: 30px; padding: 2px 8px; }
+.input__move .btn:disabled { opacity: .35; }
 
 /* ---- Screen-edge glow ---- */
 .edge { position: fixed; inset: 0; pointer-events: none; z-index: 50; opacity: 0; transition: opacity .8s ease; }
@@ -315,14 +320,16 @@ body.wall .main { overflow: hidden; }
 body.wall #view-dashboard { padding: 2.2vh 3vw 3vh; gap: 2.4vh; flex: 1; min-height: 0; }
 body.wall .wallhead { display: flex; align-items: center; gap: 3vw; }
 body.wall .wallhead .clock__time { font-size: clamp(28px, 5vh, 64px); }
-body.wall .wallhead__state { flex: 1; font: 800 clamp(26px, 6vh, 72px)/1.05 var(--mono); letter-spacing: 1px; text-align: center; overflow: hidden; text-overflow: ellipsis; }
+body.wall .wallhead__state { --name-scale: 1; flex: 1; min-width: 0; font: 800 calc(clamp(26px, 6vh, 72px) * var(--name-scale))/1.05 var(--mono); letter-spacing: 1px; text-align: center; overflow: hidden; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 body.wall[data-overall="ok"] .wallhead__state { color: var(--ok); }
 body.wall[data-overall="counting"] .wallhead__state, body.wall[data-overall="starting"] .wallhead__state { color: var(--warn); }
 body.wall[data-overall="alarm"] .wallhead__state { color: var(--err); }
 body.wall[data-overall="idle"] .wallhead__state { color: var(--dim); }
 body.wall .tiles { flex: 1; min-height: 0; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); grid-auto-rows: 1fr; gap: 2vh 1.6vw; }
 body.wall .tile { justify-content: center; padding: 2vh 1.6vw; gap: 1vh; }
-body.wall .tile__name { font-size: clamp(16px, 3vh, 38px); }
+body.wall .tile__name { --name-scale: 1; font-size: calc(clamp(16px, 3vh, 38px) * var(--name-scale)); line-height: 1.15; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+body.wall[data-wallname="medium"] .tile__name, body.wall[data-wallname="medium"] .wallhead__state { --name-scale: .78; }
+body.wall[data-wallname="small"] .tile__name, body.wall[data-wallname="small"] .wallhead__state { --name-scale: .6; }
 body.wall .tile__state { font-size: clamp(24px, 6vh, 80px); }
 body.wall .tile__sub { font-size: clamp(13px, 2.2vh, 28px); }
 body.wall .tile .meter__track { height: clamp(10px, 2vh, 26px); }

@@ -68,7 +68,7 @@ export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.
 // Sends one message on every enabled channel and retries the channels that failed.
 // During an outage the network is often down too, so a failed alert is retried with growing
 // pauses (30 s, 1 min, then every 2 min) for up to `maxAgeMs`; each channel stops when delivered.
-export function createDispatcher({ getSettings, log = () => {}, delays = [30_000, 60_000, 120_000], maxAgeMs = 30 * 60_000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, deps = {} }) {
+export function createDispatcher({ getSettings, log = () => {}, onResult = () => {}, delays = [30_000, 60_000, 120_000], maxAgeMs = 30 * 60_000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, deps = {} }) {
   const mail = deps.sendEmail || sendEmail;
   const tg = deps.sendTelegram || sendTelegram;
   const pending = new Set();
@@ -77,6 +77,7 @@ export function createDispatcher({ getSettings, log = () => {}, delays = [30_000
     const lang = getSettings().language;
     const started = now();
     const state = { email: 'todo', telegram: 'todo' };
+    const errors = {};
     const channels = [
       ['email', (s) => mail(s.notifications.email, subject, text, lang)],
       ['telegram', (s) => tg(s.notifications.telegram, text, lang)]
@@ -95,9 +96,12 @@ export function createDispatcher({ getSettings, log = () => {}, delays = [30_000
             await send(s);
             state[name] = 'done';
             log(`${label}: ${name} sent`, 'info');
+            onResult({ channel: name, ok: true, label });
           } catch (err) {
             state[name] = 'failed';
+            errors[name] = String(err.message).slice(0, 300);
             log(`${label}: ${name} failed (attempt ${n + 1}): ${err.message}`, 'warn');
+            onResult({ channel: name, ok: false, label, error: String(err.message).slice(0, 300), attempt: n + 1 });
           }
         }
         const failed = Object.values(state).includes('failed');
@@ -105,6 +109,7 @@ export function createDispatcher({ getSettings, log = () => {}, delays = [30_000
         const delay = delays[Math.min(n, delays.length - 1)];
         if (now() - started + delay > maxAgeMs) {
           log(`${label}: giving up`, 'error');
+          for (const [name, st] of Object.entries(state)) if (st === 'failed') onResult({ channel: name, ok: false, label, giveUp: true, error: errors[name] || '' });
           return resolve(false);
         }
         const h = setTimer(() => {

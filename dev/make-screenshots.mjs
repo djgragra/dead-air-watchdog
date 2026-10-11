@@ -46,7 +46,7 @@ const settings = (theme) => ({
     { id: 'in-b', type: 'stream', name: 'Web stream', deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: 'http://stream.example.org:8000/live', thresholdDb: -50, minSilenceSec: 20, enabled: true },
     { id: 'in-c', type: 'stream', name: 'Backup feed', deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: 'http://backup.example.org:8000/live', thresholdDb: -45, minSilenceSec: 15, enabled: true }
   ],
-  display: { edgeGlow: 'wall', startInWall: false },
+  display: { edgeGlow: 'wall', startInWall: false, wallNameSize: 'auto' },
   notifications: {
     desktop: true, reminderMin: 10, sound: { enabled: true, volume: 0.6 },
     email: { enabled: true, host: 'smtp.example.org', port: 587, secure: false, user: 'watchdog', pass: '', from: 'watchdog@example.org', recipients: ['engineer@example.org', 'duty.manager@example.org', 'oncall@example.org'] },
@@ -57,14 +57,16 @@ const settings = (theme) => ({
   heartbeat: { enabled: true, url: 'https://ping.example.org/demo', intervalMin: 5 },
   micExplained: true, closeHintShown: true
 });
-const status = {
+const mkStatus = (names) => ({
   running: true, overall: 'alarm', counts: { ok: 2, counting: 0, alarm: 1, starting: 0 }, startedAt: NOW - 3 * 3600_000 - 12 * MIN,
   inputs: [
-    { id: 'in-a', name: 'Studio A — on air', type: 'device', enabled: true, thresholdDb: -50, minSilenceSec: 30, channelPair: 0, state: 'ok', cause: null, fault: null, elapsedMs: 0, remainingMs: 0, silenceStart: null },
-    { id: 'in-b', name: 'Web stream', type: 'stream', enabled: true, thresholdDb: -50, minSilenceSec: 20, channelPair: 0, state: 'ok', cause: null, fault: null, elapsedMs: 0, remainingMs: 0, silenceStart: null },
-    { id: 'in-c', name: 'Backup feed', type: 'stream', enabled: true, thresholdDb: -45, minSilenceSec: 15, channelPair: 0, state: 'alarm', cause: 'silence', fault: null, elapsedMs: 94_000, remainingMs: 0, silenceStart: NOW - 94_000 }
+    { id: 'in-a', name: names[0], type: 'device', enabled: true, thresholdDb: -50, minSilenceSec: 30, channelPair: 0, state: 'ok', cause: null, fault: null, elapsedMs: 0, remainingMs: 0, silenceStart: null },
+    { id: 'in-b', name: names[1], type: 'stream', enabled: true, thresholdDb: -50, minSilenceSec: 20, channelPair: 0, state: 'ok', cause: null, fault: null, elapsedMs: 0, remainingMs: 0, silenceStart: null },
+    { id: 'in-c', name: names[2], type: 'stream', enabled: true, thresholdDb: -45, minSilenceSec: 15, channelPair: 0, state: 'alarm', cause: 'silence', fault: null, elapsedMs: 94_000, remainingMs: 0, silenceStart: NOW - 94_000 }
   ]
-};
+});
+const status = mkStatus(['Studio A — on air', 'Web stream', 'Backup feed']);
+const statusLong = mkStatus(['Regional Studio A — main on-air programme feed', 'Web stream: the whole evening and weekend schedule', 'Backup relay for the mountain transmitter, second mount']);
 const ev = (i, kind, cause, ago, dur, inputId, input) => ({ id: `e${i}`, kind, cause, start: NOW - ago * MIN, end: dur == null ? null : NOW - ago * MIN + dur * 1000, input, inputId, thresholdDb: -50, minSilenceSec: 30 });
 const events = [
   ev(1, 'dead-air', 'silence', 1.6, null, 'in-c', 'Backup feed'),
@@ -99,18 +101,19 @@ const initScript = ({ settings, status, events, daily }) => {
     logos: { all: resolved({}), set: resolved({ ok: true }), remove: resolved({ ok: true }) },
     heartbeat: { test: resolved({ ok: true }) },
     updates: { check: resolved({ ok: true, available: false, current: '26.10.2', latest: '26.10.2' }), download: resolved({ ok: false }), reveal: resolved(), openPage: resolved() },
+    delivery: { get: resolved([]) },
     app: { info: resolved({ version: '26.10.2', platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC' }), openExternal: resolved() },
-    on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), wallExit: on('wallExit') }
+    on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), delivery: on('delivery'), wallExit: on('wallExit') }
   };
 };
 
 const { chromium } = loadPlaywright();
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-async function shoot(file, theme, steps) {
+async function shoot(file, theme, steps, st = status) {
   const ctx = await browser.newContext({ viewport: { width: 1240, height: 800 }, deviceScaleFactor: 2, colorScheme: theme === 'light' ? 'light' : 'dark' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('page error:', e.message));
-  await page.addInitScript(initScript, { settings: settings(theme), status, events, daily });
+  await page.addInitScript(initScript, { settings: settings(theme), status: st, events, daily });
   await page.goto(`${base}/renderer/index.html`);
   await page.waitForSelector('.nav__item');
   await page.waitForTimeout(400);
@@ -137,5 +140,15 @@ await shoot('04-backup.png', 'light', async (page) => {
   await page.click('#bkExport');
   await page.locator('#bkCard').scrollIntoViewIfNeeded();
 });
+await shoot('05-wall-display.png', 'dark', async (page) => {
+  await page.click('#wallBtn');
+  await page.waitForTimeout(500);
+  await levels(page);
+}, statusLong);
+await shoot('06-inputs-order.png', 'light', async (page) => {
+  await view(page, 'settings');
+  await page.evaluate(() => document.querySelectorAll('#inputsList .input').forEach((d) => (d.open = false)));
+  await page.evaluate(() => document.querySelector('#view-settings').scrollIntoView({ block: 'start' }));
+}, statusLong);
 await browser.close();
 server.close();

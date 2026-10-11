@@ -3,6 +3,7 @@
 // © 2026 Graziano Melzi · OnAir Garage — MIT License
 import { LANGS, makeT } from './i18n.js';
 import { parseAddresses } from '../src/addresses.js';
+import { moveItem } from '../src/core/order.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 
 const api = window.api;
@@ -130,6 +131,24 @@ function renderStatus() {
   tickClock();
 }
 
+// Wall display: long names. 'auto' shrinks each name (at most to half) until it fits in two lines;
+// the other sizes are fixed (see style.css). Runs on every status change and on resize.
+function fitWallNames() {
+  const mode = settings?.display.wallNameSize || 'auto';
+  document.body.dataset.wallname = mode;
+  const shrink = (n) => {
+    n.style.removeProperty('--name-scale');
+    if (!wall || mode !== 'auto') return;
+    let scale = 1;
+    while (scale > 0.4 && n.scrollHeight > n.clientHeight + 1) {
+      scale = Math.round((scale - 0.05) * 100) / 100;
+      n.style.setProperty('--name-scale', scale);
+    }
+  };
+  for (const tile of tiles.values()) shrink(tile.name);
+  shrink($('wallState')); // the big line at the top ("DEAD AIR · <name>") carries a name too
+}
+
 function tileFor(input) {
   let tile = tiles.get(input.id);
   if (tile) return tile;
@@ -187,6 +206,7 @@ function renderTiles() {
     if (box.children[idx] !== tile.root) box.insertBefore(tile.root, box.children[idx] || null);
     tile.root.dataset.state = inp.state;
     tile.name.textContent = inp.name;
+    tile.name.title = inp.name; // the full name, when a long one is cut
     const logoSrc = logos[inp.id] || '';
     if (tile.logoSrc !== logoSrc) {
       tile.logoSrc = logoSrc;
@@ -208,6 +228,7 @@ function renderTiles() {
     for (const r of tile.rows) r.thr.style.left = `${pctOf(inp.thresholdDb)}%`;
     if (!['ok', 'counting', 'alarm', 'starting'].includes(inp.state)) resetTileMeter(tile);
   });
+  fitWallNames();
 }
 
 function onLevels(batch) {
@@ -511,7 +532,15 @@ function buildInputCard(inp, open) {
   const title = el('span', 'input__title');
   const sumLogo = el('img', 'input__logo hidden');
   sumLogo.alt = '';
-  summary.append(sumLogo, title, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'));
+  const move = el('span', 'input__move');
+  for (const [cls, glyph, key] of [['in-up', '▲', 'set.in.up'], ['in-down', '▼', 'set.in.down']]) {
+    const b = el('button', `btn btn--small ${cls}`, glyph);
+    b.type = 'button';
+    b.title = t(key);
+    b.setAttribute('aria-label', t(key));
+    move.appendChild(b);
+  }
+  summary.append(sumLogo, title, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'), move);
   const body = el('div', 'input__body');
 
   const enabled = el('input', 'in-enabled');
@@ -616,6 +645,10 @@ function updateInputsFooter() {
   $('addDevice').disabled = cards.length >= MAX_INPUTS || !!$('inputsList').querySelector('.input[data-type="device"]');
   $('inputsMax').textContent = t('set.inputs.max', { n: MAX_INPUTS });
   $('inputsEmpty').classList.toggle('hidden', cards.length > 0);
+  cards.forEach((c, i) => {
+    c.querySelector('.in-up').disabled = i === 0;
+    c.querySelector('.in-down').disabled = i === cards.length - 1;
+  });
 }
 
 function renderInputsList() {
@@ -680,6 +713,19 @@ function onInputsClick(e) {
   const card = e.target.closest?.('.input');
   if (!card) return;
   const tg = e.target;
+  const mv = tg.closest?.('.in-up, .in-down');
+  if (mv) {
+    e.preventDefault(); // a click inside the summary would open or close the card
+    const list = $('inputsList');
+    const ids = [...list.children].map((c) => c.dataset.id);
+    const next = moveItem(ids, ids.indexOf(card.dataset.id), mv.classList.contains('in-up') ? -1 : 1);
+    const byId = new Map([...list.children].map((c) => [c.dataset.id, c]));
+    next.forEach((id) => list.appendChild(byId.get(id)));
+    updateInputsFooter();
+    setDirty(true);
+    mv.focus();
+    return;
+  }
   if (tg.classList.contains('in-remove')) {
     card.remove();
     updateInputsFooter();
@@ -763,6 +809,7 @@ function fillForm() {
   $('gRet').value = s.general.retentionDays;
   $('dGlow').value = s.display.edgeGlow;
   $('dWall').checked = s.display.startInWall;
+  $('dName').value = s.display.wallNameSize;
   setDirty(false);
 }
 
@@ -782,7 +829,7 @@ function readForm() {
       updateAlert: $('uAlert').checked
     },
     heartbeat: { enabled: $('hEnable').checked, url: $('hUrl').value.trim(), intervalMin: Number($('hMin').value) || 5 },
-    display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked },
+    display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked, wallNameSize: $('dName').value },
     general: { startOnBoot: $('gBoot').checked, startMinimized: $('gMin').checked, autoStartMonitoring: $('gAuto').checked, keepAwake: $('gAwake').checked, checkUpdates: $('gUpd').checked, retentionDays: Number($('gRet').value) || 365 }
   };
 }
@@ -812,7 +859,13 @@ async function saveForm(e) {
   }
   const hbBad = patch.heartbeat.enabled && !validUrl(patch.heartbeat.url);
   $('hBad').classList.toggle('hidden', !hbBad);
-  if (bad || hbBad) return;
+  if (bad || hbBad) {
+    const st = $('saveState');
+    st.textContent = t('set.notSaved');
+    st.classList.add('is-dirty');
+    (hbBad ? $('hBad') : $('inputsList').querySelector('.in-bad:not(.hidden)'))?.scrollIntoView({ block: 'center' });
+    return;
+  }
   if (patch.inputs.some((i) => i.type === 'device' && i.enabled) && !settings.micExplained) {
     if (!(await askMic())) return;
     patch.micExplained = true;
@@ -881,9 +934,22 @@ async function testChannel(channel) {
   const out = $(channel === 'email' ? 'mRes' : 'tRes');
   out.className = 'testres';
   out.textContent = t('set.test.sending');
-  const r = await api.notifications.test(channel, channel === 'email' ? form.notifications.email : form.notifications.telegram);
-  out.textContent = r.ok ? t('set.test.ok') : t('set.test.fail', { error: r.error });
-  out.classList.add(r.ok ? 'is-ok' : 'is-fail');
+  const cfg = channel === 'email' ? form.notifications.email : form.notifications.telegram;
+  const r = await api.notifications.test(channel, cfg);
+  // The test uses what is on the screen; alerts use what is saved and only when the channel is switched on.
+  const notes = [];
+  if (r.ok && dirty) notes.push(t('set.test.unsaved'));
+  if (r.ok && !cfg.enabled) notes.push(t('set.test.off'));
+  out.textContent = r.ok ? [t('set.test.ok'), ...notes].join(' ') : t('set.test.fail', { error: r.error });
+  out.classList.add(r.ok ? (notes.length ? 'is-warn' : 'is-ok') : 'is-fail');
+}
+
+// ---- alerts that could not be delivered ------------------------------------------------------------
+function renderDelivery(list) {
+  const box = $('deliveryWarn');
+  const items = Array.isArray(list) ? list : [];
+  box.textContent = items.map((f) => t(f.giveUp ? 'warn.delivery.giveup' : 'warn.delivery', { channel: t(`ch.${f.channel}`), error: f.error || '?' })).join(' · ');
+  box.classList.toggle('hidden', !items.length);
 }
 
 // ---- configuration backup ----------------------------------------------------------------------------
@@ -1177,6 +1243,8 @@ function wire() {
     if (!dirty) fillForm();
   });
   api.on.updateAvailable(showUpdateBanner);
+  api.on.delivery(renderDelivery);
+  window.addEventListener('resize', () => requestAnimationFrame(fitWallNames));
   api.on.updateProgress(({ got, total }) => {
     if (updateState?.busy && total) {
       updateState.busy = t('upd.downloading', { pct: Math.round((got / total) * 100) });
@@ -1194,6 +1262,7 @@ async function init() {
   wire();
   renderAll();
   await Promise.all([refreshEvents(), refreshStats()]);
+  renderDelivery(await api.delivery.get());
   tickClock();
   setInterval(tickClock, 1000);
   setInterval(() => {

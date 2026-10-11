@@ -28,7 +28,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   inputs: [], // see DEFAULT_INPUT: at most one sound card and any number of streams (MAX_INPUTS in total)
   display: {
     edgeGlow: 'wall', // screen-edge glow: 'wall' (only in wall display) | 'always' | 'off'
-    startInWall: false // open straight into the full-screen wall display (control-room monitor)
+    startInWall: false, // open straight into the full-screen wall display (control-room monitor)
+    wallNameSize: 'auto' // size of the input names in the wall display: 'auto' (shrinks long names to fit) | 'large' | 'medium' | 'small'
   },
   notifications: {
     desktop: true,
@@ -105,6 +106,7 @@ export function sanitizeSettings(s) {
   if (!['dark', 'light', 'auto'].includes(out.theme)) out.theme = d.theme;
   if (!['wall', 'always', 'off'].includes(out.display.edgeGlow)) out.display.edgeGlow = d.display.edgeGlow;
   out.display.startInWall = !!out.display.startInWall;
+  if (!['auto', 'large', 'medium', 'small'].includes(out.display.wallNameSize)) out.display.wallNameSize = d.display.wallNameSize;
   const used = new Set();
   let hasDevice = false;
   out.inputs = (Array.isArray(out.inputs) ? out.inputs : [])

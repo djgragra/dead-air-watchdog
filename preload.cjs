@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('api', {
     accessStatus: () => invoke('audio:access-status'),
     testSound: (volume) => invoke('audio:test-sound', volume)
   },
+  delivery: {
+    get: () => invoke('delivery:get')
+  },
   notifications: {
     test: (channel, cfg) => invoke('notify:test', channel, cfg)
   },
@@ -67,6 +70,7 @@ contextBridge.exposeInMainWorld('api', {
     updateAvailable: on('event:update-available'),
     updateProgress: on('event:update-progress'),
     settingsChanged: on('event:settings-changed'),
+    delivery: on('event:delivery'),
     wallExit: on('event:wall-exit')
   }
 });

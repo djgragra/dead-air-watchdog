@@ -29,6 +29,9 @@ let store;
 let monitor;
 let dispatcher;
 let updateNotice;
+// last failed delivery per channel (cleared by the next success): shown in the window so a broken email setup is not silent
+const deliveryFaults = new Map();
+const faultList = () => [...deliveryFaults].map(([channel, f]) => ({ channel, ...f }));
 let alertState;
 let heartbeat;
 let logos;
@@ -321,6 +324,7 @@ const EXTERNAL_OK = [/^https:\/\/onairgarage\.com(\/|$)/, /^https:\/\/github\.co
 
 function registerIpc() {
   handle('settings:get', () => store.getSettings());
+  handle('delivery:get', () => faultList());
   // everything that has to follow a change of the settings (also used by the backup import)
   function settingsChanged(next) {
     logos.prune(next.inputs.map((i) => i.id)); // logos of removed inputs
@@ -494,7 +498,14 @@ app.whenReady().then(() => {
     },
     log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[update-notice] ${m}`)
   });
-  dispatcher = createDispatcher({ getSettings: () => store.getSettings(), log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[notify] ${m}`) });
+  dispatcher = createDispatcher({
+    getSettings: () => store.getSettings(),
+    onResult: (r) => {
+      if (r.ok) deliveryFaults.delete(r.channel);
+      else deliveryFaults.set(r.channel, { error: r.error, giveUp: !!r.giveUp, label: r.label, at: Date.now() });
+      sendUi('event:delivery', faultList());
+    },
+    log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[notify] ${m}`) });
   monitor = createMonitor({
     store,
     engine,

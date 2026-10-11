@@ -53,6 +53,7 @@
 
     <!-- Dashboard -->
     <section class="view" id="view-dashboard">
+      <p class="warn warn--box hidden" id="deliveryWarn" role="alert"></p>
       <div class="wallhead" id="wallHead">
         <div class="clock"><div class="clock__time" id="wallClock">--:--:--</div><div class="clock__date" id="wallDate">—</div></div>
         <div class="wallhead__state" id="wallState"></div>
@@ -209,6 +210,9 @@
               <select id="dGlow"><option value="wall" data-i18n="set.disp.glow.wall">Only in wall display</option><option value="always" data-i18n="set.disp.glow.always">Always</option><option value="off" data-i18n="set.disp.glow.off">Off</option></select>
             </label>
             <label class="check"><input type="checkbox" id="dWall" /><span data-i18n="set.disp.start">Open in wall display mode</span></label>
+            <label class="field"><span data-i18n="set.disp.name">Names in the wall display</span>
+              <select id="dName"><option value="auto" data-i18n="set.disp.name.auto">Automatic: shrink long names to fit</option><option value="large" data-i18n="set.disp.name.large">Large</option><option value="medium" data-i18n="set.disp.name.medium">Medium</option><option value="small" data-i18n="set.disp.name.small">Small</option></select>
+            </label>
             <label class="field"><span data-i18n="set.gen.retention">Keep the event log for (days)</span><input type="number" id="gRet" min="30" max="3650" step="1" inputmode="numeric" class="num" /></label>
           </div>
         </fieldset>
