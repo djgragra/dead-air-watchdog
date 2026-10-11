@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('api', {
   notifications: {
     test: (channel, cfg) => invoke('notify:test', channel, cfg)
   },
+  backup: {
+    export: (includeSecrets) => invoke('backup:export', includeSecrets),
+    import: (mode) => invoke('backup:import', mode)
+  },
   logos: {
     all: () => invoke('logos:all'),
     set: (id, dataUrl) => invoke('logos:set', id, dataUrl),
