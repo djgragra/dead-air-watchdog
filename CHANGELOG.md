@@ -1,5 +1,10 @@
 # Changelog
 
+## 26.10.5 — 2026-10-12
+
+- **A stream that comes back turns green again.** When a stream stopped delivering data the input went to "dead air" and the alerts went out, but when the data resumed the tile and the wall display stayed red (and the recovery message could be missing) even though the meters were moving again. The web engine tells the app "stalled" when the data stops but does not say "playing" again when it resumes, and the app was waiting for that. Now the app also takes playback time moving again as proof that the audio is back. Sound cards and microphones were not affected.
+- Tests: a stream that stalls and resumes (back to OK once), one that stalls and does not move (stays in fault), and the stall-then-wait-then-play case; they run the real `engine.js` against a stub of the browser audio.
+
 ## 26.10.4 — 2026-10-12
 
 - **More than 10 streams.** With 12 streams switched on, two of them stayed "dead air", and moving them around moved the problem: the web engine inside the app opens at most 10 streams at a time (and at most 6 to the same server). The app now opens the streams in several hidden audio windows, up to 6 streams each, so all of them connect (up to 32 inputs). With 6 streams or fewer nothing changes: there is still a single window.
