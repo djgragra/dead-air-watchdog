@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.10.4 — 2026-10-12
+
+- **More than 10 streams.** With 12 streams switched on, two of them stayed "dead air", and moving them around moved the problem: the web engine inside the app opens at most 10 streams at a time (and at most 6 to the same server). The app now opens the streams in several hidden audio windows, up to 6 streams each, so all of them connect (up to 32 inputs). With 6 streams or fewer nothing changes: there is still a single window.
+- **Wall display with many inputs.** Every input is now shown, from 1 up to 32: the tiles rearrange in the number of columns and rows that gives the biggest tiles, and their text scales with the tile. Before, only the first 8 fitted and the others were cut.
+- **A field that fails the check is marked.** When saving is refused (for example a stream address without `http://`), the field itself turns red, its input is outlined, the message under it is red and the cursor goes to it. The same for the heartbeat address.
+- Tests: how the inputs are split between the audio windows (the 12-stream case, 32 streams, the sound card, moving an input) and how the wall display picks columns and rows for 1 to 32 inputs.
+
 ## 26.10.3 — 2026-10-11
 
 Thanks to Richard, who tried 26.10.2 on a real set of Icecast mounts and wrote to us with what did not work and what he missed: this release is made of his notes.

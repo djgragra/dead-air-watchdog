@@ -4,6 +4,7 @@
 import { LANGS, makeT } from './i18n.js';
 import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
+import { wallGrid } from '../src/core/wall-grid.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 
 const api = window.api;
@@ -149,6 +150,20 @@ function fitWallNames() {
   shrink($('wallState')); // the big line at the top ("DEAD AIR · <name>") carries a name too
 }
 
+// Wall display: puts every tile on screen. Picks the number of columns (and so rows) that gives the biggest
+// tiles for what is in the window, for 1 to 32 inputs; the tile text scales with the tile (style.css).
+function fitWallGrid() {
+  const box = $('tiles');
+  if (!wall) {
+    box.style.removeProperty('grid-template-columns');
+    box.style.removeProperty('grid-template-rows');
+    return;
+  }
+  const { cols, rows } = wallGrid(tiles.size, box.clientWidth, box.clientHeight);
+  box.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+  box.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+}
+
 function tileFor(input) {
   let tile = tiles.get(input.id);
   if (tile) return tile;
@@ -228,6 +243,7 @@ function renderTiles() {
     for (const r of tile.rows) r.thr.style.left = `${pctOf(inp.thresholdDb)}%`;
     if (!['ok', 'counting', 'alarm', 'starting'].includes(inp.state)) resetTileMeter(tile);
   });
+  fitWallGrid();
   fitWallNames();
 }
 
@@ -691,6 +707,11 @@ function onInputsEvent(e) {
   const card = e.target.closest?.('.input');
   if (!card) return;
   const tg = e.target;
+  if (tg.classList.contains('in-url') && tg.classList.contains('is-invalid') && validUrl(tg.value.trim())) {
+    markInvalid(tg, false);
+    card.classList.remove('has-error');
+    card.querySelector('.in-bad')?.classList.add('hidden');
+  }
   if (tg.classList.contains('in-thr-range')) card.querySelector('.in-thr').value = tg.value;
   if (tg.classList.contains('in-thr')) card.querySelector('.in-thr-range').value = clamp(Number(tg.value) || -50, -90, -10);
   card.querySelector('.input__title').textContent = inputTitle(card);
@@ -843,6 +864,14 @@ function normaliseRecipients() {
   bad.classList.toggle('hidden', !dropped.length);
 }
 
+// Red field + aria-invalid on a field that failed the check (cleared as soon as the text is valid again).
+function markInvalid(field, on) {
+  if (!field) return;
+  field.classList.toggle('is-invalid', on);
+  if (on) field.setAttribute('aria-invalid', 'true');
+  else field.removeAttribute('aria-invalid');
+}
+
 async function saveForm(e) {
   e?.preventDefault();
   normaliseRecipients();
@@ -852,6 +881,8 @@ async function saveForm(e) {
     const inp = patch.inputs.find((i) => i.id === card.dataset.id);
     const invalid = inp.type === 'stream' && inp.enabled && !validUrl(inp.streamUrl);
     card.querySelector('.in-bad')?.classList.toggle('hidden', !invalid);
+    markInvalid(card.querySelector('.in-url'), invalid); // the field itself turns red, not only the text under it
+    card.classList.toggle('has-error', invalid);
     if (invalid) {
       card.open = true;
       bad = true;
@@ -859,11 +890,14 @@ async function saveForm(e) {
   }
   const hbBad = patch.heartbeat.enabled && !validUrl(patch.heartbeat.url);
   $('hBad').classList.toggle('hidden', !hbBad);
+  markInvalid($('hUrl'), hbBad);
   if (bad || hbBad) {
     const st = $('saveState');
     st.textContent = t('set.notSaved');
     st.classList.add('is-dirty');
-    (hbBad ? $('hBad') : $('inputsList').querySelector('.in-bad:not(.hidden)'))?.scrollIntoView({ block: 'center' });
+    const first = hbBad && !bad ? $('hUrl') : $('inputsList').querySelector('.in-url.is-invalid');
+    first?.scrollIntoView({ block: 'center' });
+    first?.focus({ preventScroll: true });
     return;
   }
   if (patch.inputs.some((i) => i.type === 'device' && i.enabled) && !settings.micExplained) {
@@ -1173,6 +1207,12 @@ function wire() {
     setDirty(true);
   });
   $('mTo').addEventListener('change', normaliseRecipients);
+  $('hUrl').addEventListener('input', () => {
+    if ($('hUrl').classList.contains('is-invalid') && validUrl($('hUrl').value.trim())) {
+      markInvalid($('hUrl'), false);
+      $('hBad').classList.add('hidden');
+    }
+  });
   $('inputsList').addEventListener('click', onInputsClick);
   $('addStream').addEventListener('click', () => addInput('stream'));
   $('addDevice').addEventListener('click', () => {
@@ -1244,7 +1284,7 @@ function wire() {
   });
   api.on.updateAvailable(showUpdateBanner);
   api.on.delivery(renderDelivery);
-  window.addEventListener('resize', () => requestAnimationFrame(fitWallNames));
+  window.addEventListener('resize', () => requestAnimationFrame(() => { fitWallGrid(); fitWallNames(); }));
   api.on.updateProgress(({ got, total }) => {
     if (updateState?.busy && total) {
       updateState.busy = t('upd.downloading', { pct: Math.round((got / total) * 100) });

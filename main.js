@@ -13,6 +13,7 @@ import { buildExport, prepareImport, backupFileName, MAX_BACKUP_BYTES } from './
 import { createHeartbeat } from './src/heartbeat.js';
 import { createLogos } from './src/logos.js';
 import { engineHandlers } from './src/engine-events.js';
+import { shardInputs } from './src/engine-shards.js';
 import { aggregateDeadAir } from './src/core/stats.js';
 import { toCsv, toJson } from './src/core/export.js';
 import { formatDuration } from './src/core/format.js';
@@ -40,9 +41,11 @@ let soundActive = false;
 let soundMuted = false;
 let baseStatus = null;
 let mainWindow = null;
-let engineWindow = null;
-let engineReady = false;
-let pendingEngineList = null;
+// Audio engine windows: [0] also owns the sound card, the alarm sound and the device list; the others only open
+// streams (see src/engine-shards.js). Each has { index, win, ready, pending }.
+const engines = [];
+const engineOf = (sender) => engines.find((e) => e.win && !e.win.isDestroyed() && e.win.webContents === sender);
+const isEngineContents = (id) => engines.some((e) => e.win && !e.win.isDestroyed() && e.win.webContents.id === id);
 let tray = null;
 let isQuitting = false;
 let blockerId = null;
@@ -74,10 +77,31 @@ const open = (v) => {
   }
 };
 
-// ---- audio engine (hidden window) -------------------------------------------------------
-function createEngineWindow() {
-  engineReady = false;
-  engineWindow = new BrowserWindow({
+// ---- audio engine (hidden windows) ------------------------------------------------------
+// The CORS header Web Audio needs is added to media responses of engine windows only, and only the first one
+// may use the microphone. Every extra window has its own session (its own connection pool).
+const configuredSessions = new WeakSet();
+function configureEngineSession(ses, allowMic) {
+  if (configuredSessions.has(ses)) return;
+  configuredSessions.add(ses);
+  ses.setPermissionRequestHandler((wc, permission, cb, details) => cb(allowMic && permission === 'media' && !!wc && engines[0]?.win?.webContents === wc && !(details.mediaTypes || []).includes('video')));
+  ses.setPermissionCheckHandler((wc, permission) => allowMic && permission === 'media' && !!wc && engines[0]?.win?.webContents === wc);
+  // Stream servers rarely send CORS headers; without them a Web Audio graph is fed silence.
+  ses.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, cb) => {
+    if (details.resourceType !== 'media' || !isEngineContents(details.webContentsId)) return cb({});
+    const headers = { ...details.responseHeaders };
+    for (const k of Object.keys(headers)) if (k.toLowerCase() === 'access-control-allow-origin') delete headers[k];
+    headers['Access-Control-Allow-Origin'] = ['*'];
+    cb({ responseHeaders: headers });
+  });
+}
+
+function createEngineWindow(index) {
+  const partition = index === 0 ? undefined : `engine-${index}`;
+  const eng = { index, win: null, ready: false, pending: null };
+  engines[index] = eng;
+  configureEngineSession(partition ? session.fromPartition(partition) : session.defaultSession, index === 0);
+  eng.win = new BrowserWindow({
     show: false,
     width: 200,
     height: 100,
@@ -87,35 +111,59 @@ function createEngineWindow() {
       nodeIntegration: false,
       sandbox: true,
       backgroundThrottling: false,
-      autoplayPolicy: 'no-user-gesture-required'
+      autoplayPolicy: 'no-user-gesture-required',
+      ...(partition ? { partition } : {})
     }
   });
-  engineWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  engineWindow.webContents.on('will-navigate', (e) => e.preventDefault());
-  engineWindow.loadFile(path.join(__dirname, 'renderer', 'engine.html'));
+  eng.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  eng.win.webContents.on('will-navigate', (e) => e.preventDefault());
+  eng.win.loadFile(path.join(__dirname, 'renderer', 'engine.html'));
   // The engine must never stay dead silently: a crashed or frozen renderer is replaced.
   const restart = (why) => {
-    console.error('engine restart:', why);
-    const old = engineWindow;
-    engineWindow = null;
+    console.error(`engine ${index} restart:`, why);
+    const old = eng.win;
+    eng.win = null;
     if (old && !old.isDestroyed()) old.destroy();
     if (isQuitting) return;
-    createEngineWindow();
+    const fresh = createEngineWindow(index);
     monitor?.engineRestarted();
-    if (monitor?.isRunning()) pendingEngineList = monitor.engineList();
+    if (monitor?.isRunning()) fresh.pending = shardInputs(monitor.engineList())[index] || [];
   };
-  engineWindow.webContents.on('render-process-gone', (_e, d) => restart(d.reason));
-  engineWindow.on('unresponsive', () => restart('unresponsive'));
+  eng.win.webContents.on('render-process-gone', (_e, d) => restart(d.reason));
+  eng.win.on('unresponsive', () => restart('unresponsive'));
+  return eng;
 }
 
+function closeEngine(index) {
+  const eng = engines[index];
+  if (!eng) return;
+  engines[index] = undefined;
+  if (eng.win && !eng.win.isDestroyed()) eng.win.destroy();
+  while (engines.length && !engines[engines.length - 1]) engines.pop();
+}
+
+const sendEngine = (eng, channel, payload) => {
+  if (eng?.ready && eng.win && !eng.win.isDestroyed()) eng.win.webContents.send(channel, payload);
+};
+
 const engine = {
+  // list: every input the engine must open; each window gets its share, windows that are no longer needed close
   sync(list) {
-    pendingEngineList = list;
-    if (engineReady && engineWindow) engineWindow.webContents.send('engine:sync', list);
+    const shards = shardInputs(list);
+    shards.forEach((inputs, index) => {
+      const eng = engines[index] || createEngineWindow(index);
+      eng.pending = inputs;
+      sendEngine(eng, 'engine:sync', inputs);
+    });
+    for (let index = engines.length - 1; index >= shards.length; index--) closeEngine(index);
   },
   stop() {
-    pendingEngineList = null;
-    if (engineReady && engineWindow) engineWindow.webContents.send('engine:stop');
+    for (const eng of engines) {
+      if (!eng) continue;
+      eng.pending = null;
+      sendEngine(eng, 'engine:stop');
+    }
+    for (let index = engines.length - 1; index >= 1; index--) closeEngine(index);
   }
 };
 
@@ -123,20 +171,23 @@ let rpcSeq = 0;
 const rpcWaiting = new Map();
 function engineRpc(op, timeoutMs = 60_000) {
   return new Promise((resolve, reject) => {
-    if (!engineReady || !engineWindow) return reject(new Error('engine-not-ready'));
+    const eng = engines[0];
+    if (!eng?.ready || !eng.win) return reject(new Error('engine-not-ready'));
     const id = ++rpcSeq;
     const timer = setTimeout(() => {
       rpcWaiting.delete(id);
       reject(new Error('timeout'));
     }, timeoutMs);
     rpcWaiting.set(id, { resolve, reject, timer });
-    engineWindow.webContents.send('engine:rpc', { id, op });
+    eng.win.webContents.send('engine:rpc', { id, op });
   });
 }
 
+// messages from any engine window
 function fromEngine(channel, handler) {
   ipcMain.on(channel, (e, ...args) => {
-    if (!engineWindow || e.sender !== engineWindow.webContents) return;
+    const eng = engineOf(e.sender);
+    if (!eng) return;
     handler(...args);
   });
 }
@@ -258,9 +309,8 @@ function applyKeepAwake() {
 
 // Audible alarm: played by the engine window (always alive), stopped by recovery or by the user.
 function applySound() {
-  if (!engineReady || !engineWindow) return;
   const snd = store.getSettings().notifications.sound;
-  engineWindow.webContents.send('engine:sound', { on: soundActive && !soundMuted && snd.enabled, volume: snd.volume });
+  sendEngine(engines[0], 'engine:sound', { on: soundActive && !soundMuted && snd.enabled, volume: snd.volume });
 }
 
 function setAlarmSound(on) {
@@ -400,7 +450,7 @@ function registerIpc() {
     pushStatus();
   });
   handle('audio:test-sound', (volume) => {
-    if (engineReady && engineWindow) engineWindow.webContents.send('engine:sound', { on: true, test: true, volume });
+    sendEngine(engines[0], 'engine:sound', { on: true, test: true, volume });
   });
   handle('heartbeat:test', (url) => heartbeat.ping(typeof url === 'string' ? url.trim() : ''));
 
@@ -523,30 +573,18 @@ app.whenReady().then(() => {
     log: (m, level) => console[level === 'error' ? 'error' : 'log'](`[monitor] ${m}`)
   });
 
-  // The audio input may only be used by the engine window, and only for audio.
-  const ses = session.defaultSession;
-  ses.setPermissionRequestHandler((wc, permission, cb, details) => cb(permission === 'media' && !!engineWindow && wc === engineWindow.webContents && !(details.mediaTypes || []).includes('video')));
-  ses.setPermissionCheckHandler((wc, permission) => permission === 'media' && !!engineWindow && !!wc && wc === engineWindow.webContents);
-  // Stream servers rarely send CORS headers; without them a Web Audio graph is fed silence.
-  // The header is added to media responses of the engine window only.
-  ses.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, cb) => {
-    if (details.resourceType !== 'media' || !engineWindow || details.webContentsId !== engineWindow.webContents.id) return cb({});
-    const headers = { ...details.responseHeaders };
-    for (const k of Object.keys(headers)) if (k.toLowerCase() === 'access-control-allow-origin') delete headers[k];
-    headers['Access-Control-Allow-Origin'] = ['*'];
-    cb({ responseHeaders: headers });
-  });
-
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')));
 
-  fromEngine('engine:ready', () => {
-    engineReady = true;
-    if (pendingEngineList) engineWindow.webContents.send('engine:sync', pendingEngineList);
-    applySound();
+  ipcMain.on('engine:ready', (e) => {
+    const eng = engineOf(e.sender);
+    if (!eng) return;
+    eng.ready = true;
+    if (eng.pending) sendEngine(eng, 'engine:sync', eng.pending);
+    if (eng.index === 0) applySound();
   });
   for (const [channel, handler] of Object.entries(engineHandlers(monitor))) fromEngine(channel, handler);
   ipcMain.on('engine:rpc-result', (e, msg) => {
-    if (!engineWindow || e.sender !== engineWindow.webContents) return;
+    if (engineOf(e.sender)?.index !== 0) return;
     const w = rpcWaiting.get(msg.id);
     if (!w) return;
     clearTimeout(w.timer);
@@ -556,7 +594,7 @@ app.whenReady().then(() => {
 
   heartbeat = createHeartbeat({ getSettings: () => store.getSettings(), fetchFn: (u, o) => net.fetch(u, o), version: app.getVersion(), log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[heartbeat] ${m}`) });
   registerIpc();
-  createEngineWindow();
+  createEngineWindow(0);
   createWindow();
   createTray();
   applyGeneralSettings(store.getSettings());
