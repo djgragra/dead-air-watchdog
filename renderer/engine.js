@@ -33,7 +33,7 @@
     if (p.stream) p.stream.getTracks().forEach((t) => { t.onended = null; t.stop(); });
     p.stream = null;
     if (p.audio) {
-      p.audio.onerror = p.audio.onended = p.audio.onstalled = p.audio.onwaiting = p.audio.onplaying = null;
+      p.audio.onerror = p.audio.onended = p.audio.onstalled = p.audio.onwaiting = p.audio.onplaying = p.audio.ontimeupdate = null;
       p.audio.pause();
       p.audio.removeAttribute('src');
       p.audio.load();
@@ -115,7 +115,19 @@
       clearTimeout(p.stallTimer);
       p.stallTimer = setTimeout(() => { if (gen === p.gen) { disconnectAll(p); scheduleRetry(p, gen, 'stream-stalled'); } }, STALL_MS);
     };
-    audio.onplaying = () => { clearTimeout(p.stallTimer); if (gen === p.gen) setOk(p); };
+    const recovered = () => { clearTimeout(p.stallTimer); if (gen === p.gen) setOk(p); };
+    audio.onplaying = recovered;
+    // After a plain "stalled" (no "waiting") the browser does not fire "playing" again when the data
+    // resumes, so the fault would stay for good while the meters move: playback time advancing again
+    // is the proof that audio is back.
+    let lastTime = 0;
+    audio.ontimeupdate = () => {
+      const t = audio.currentTime;
+      if (t !== lastTime) {
+        lastTime = t;
+        if (p.faulted && !audio.paused) recovered();
+      }
+    };
     p.source = ctx.createMediaElementSource(audio);
     p.source.connect(p.node);
     audio.src = p.input.streamUrl;
