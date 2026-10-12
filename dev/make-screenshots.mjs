@@ -83,7 +83,7 @@ const daily = Array.from({ length: 7 }, (_, i) => {
   return { date: d.toISOString().slice(0, 10), count, totalMs: count * 95_000, longestMs: count ? 120_000 : 0 };
 });
 
-const initScript = ({ settings, status, events, daily }) => {
+const initScript = ({ settings, status, events, daily, APP_VERSION }) => {
   const h = () => () => {};
   const resolved = (v) => () => Promise.resolve(v);
   window.__fire = {};
@@ -102,7 +102,7 @@ const initScript = ({ settings, status, events, daily }) => {
     heartbeat: { test: resolved({ ok: true }) },
     updates: { check: resolved({ ok: true, available: false, current: '26.10.2', latest: '26.10.2' }), download: resolved({ ok: false }), reveal: resolved(), openPage: resolved() },
     delivery: { get: resolved([]) },
-    app: { info: resolved({ version: JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version, platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC' }), openExternal: resolved() },
+    app: { info: resolved({ version: APP_VERSION, platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC' }), openExternal: resolved() },
     on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), delivery: on('delivery'), wallExit: on('wallExit') }
   };
 };
@@ -118,13 +118,14 @@ const bigSetup = (n, theme) => {
   return { settings: { ...settings(theme), inputs }, status: st };
 };
 
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; // the version shown in the window
 const { chromium } = loadPlaywright();
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
 async function shoot(file, theme, steps, st = status, cfg = null) {
   const ctx = await browser.newContext({ viewport: { width: 1240, height: 800 }, deviceScaleFactor: 2, colorScheme: theme === 'light' ? 'light' : 'dark' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('page error:', e.message));
-  await page.addInitScript(initScript, { settings: cfg || settings(theme), status: st, events, daily });
+  await page.addInitScript(initScript, { settings: cfg || settings(theme), status: st, events, daily, APP_VERSION });
   await page.goto(`${base}/renderer/index.html`);
   await page.waitForSelector('.nav__item');
   await page.waitForTimeout(400);
