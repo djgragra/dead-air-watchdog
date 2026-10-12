@@ -83,7 +83,7 @@ const daily = Array.from({ length: 7 }, (_, i) => {
   return { date: d.toISOString().slice(0, 10), count, totalMs: count * 95_000, longestMs: count ? 120_000 : 0 };
 });
 
-const initScript = ({ settings, status, events, daily }) => {
+const initScript = ({ settings, status, events, daily, APP_VERSION }) => {
   const h = () => () => {};
   const resolved = (v) => () => Promise.resolve(v);
   window.__fire = {};
@@ -102,18 +102,30 @@ const initScript = ({ settings, status, events, daily }) => {
     heartbeat: { test: resolved({ ok: true }) },
     updates: { check: resolved({ ok: true, available: false, current: '26.10.2', latest: '26.10.2' }), download: resolved({ ok: false }), reveal: resolved(), openPage: resolved() },
     delivery: { get: resolved([]) },
-    app: { info: resolved({ version: '26.10.2', platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC' }), openExternal: resolved() },
+    app: { info: resolved({ version: APP_VERSION, platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC' }), openExternal: resolved() },
     on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), delivery: on('delivery'), wallExit: on('wallExit') }
   };
 };
 
+// n invented stations (a big installation): all in a good state, a few in trouble, one switched off
+const bigSetup = (n, theme) => {
+  const names = ['Main', 'North', 'South', 'East', 'West', 'City', 'Coast', 'Hills', 'Lake', 'Valley', 'Port', 'Metro', 'Sport', 'News', 'Classic', 'Rock'];
+  const inputs = Array.from({ length: n }, (_, i) => ({ id: `big-${i}`, type: 'stream', name: `${names[i % names.length]} FM ${String(i + 1).padStart(2, '0')}`, deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: `http://stream${(i % 3) + 1}.example.org:8000/mount${i + 1}`, thresholdDb: -50, minSilenceSec: 20, enabled: i !== n - 3 }));
+  const st = {
+    running: true, overall: 'alarm', counts: { ok: n - 3, counting: 0, alarm: 1, starting: 0 }, startedAt: NOW - 3600_000,
+    inputs: inputs.map((inp, i) => ({ id: inp.id, name: inp.name, type: 'stream', enabled: inp.enabled, thresholdDb: -50, minSilenceSec: 20, channelPair: 0, state: !inp.enabled ? 'off' : i === 4 ? 'alarm' : 'ok', cause: i === 4 ? 'offline' : null, fault: null, elapsedMs: i === 4 ? 61_000 : 0, remainingMs: 0, silenceStart: i === 4 ? NOW - 61_000 : null }))
+  };
+  return { settings: { ...settings(theme), inputs }, status: st };
+};
+
+const APP_VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; // the version shown in the window
 const { chromium } = loadPlaywright();
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-async function shoot(file, theme, steps, st = status) {
+async function shoot(file, theme, steps, st = status, cfg = null) {
   const ctx = await browser.newContext({ viewport: { width: 1240, height: 800 }, deviceScaleFactor: 2, colorScheme: theme === 'light' ? 'light' : 'dark' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('page error:', e.message));
-  await page.addInitScript(initScript, { settings: settings(theme), status: st, events, daily });
+  await page.addInitScript(initScript, { settings: cfg || settings(theme), status: st, events, daily, APP_VERSION });
   await page.goto(`${base}/renderer/index.html`);
   await page.waitForSelector('.nav__item');
   await page.waitForTimeout(400);
@@ -150,5 +162,18 @@ await shoot('06-inputs-order.png', 'light', async (page) => {
   await page.evaluate(() => document.querySelectorAll('#inputsList .input').forEach((d) => (d.open = false)));
   await page.evaluate(() => document.querySelector('#view-settings').scrollIntoView({ block: 'start' }));
 }, statusLong);
+const big = bigSetup(32, 'dark');
+await shoot('07-wall-32-inputs.png', 'dark', async (page) => {
+  await page.click('#wallBtn');
+  await page.waitForTimeout(500);
+  await page.evaluate((ids) => window.__fire.levels?.(Object.fromEntries(ids.map((id, i) => [id, { rms: [-18 - (i % 9) * 2.5, -19 - (i % 7) * 2.5], peak: [-8, -9] }]))), big.status.inputs.map((i) => i.id));
+}, big.status, big.settings);
+await shoot('08-invalid-field.png', 'light', async (page) => {
+  await view(page, 'settings');
+  await page.evaluate(() => document.querySelectorAll('#inputsList .input')[1].setAttribute('open', ''));
+  await page.fill('#inputsList .input:nth-child(2) .in-url', 'stream.example.org/live');
+  await page.click('#saveBtn, button[type="submit"]');
+  await page.waitForTimeout(300);
+}, status);
 await browser.close();
 server.close();
