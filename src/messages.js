@@ -22,6 +22,14 @@ const MSG = {
     'err.telegramToken': 'Telegram bot token not valid (expected something like 123456789:AA…)',
     'update.subject': '[Dead Air Watchdog] New version {latest} available',
     'update.body': 'Version {latest} of Dead Air Watchdog is available (installed: {current}).\nOpen the app: Settings → Updates offers "Download installer".\n{url}',
+    'group.alarm.subject': '[Dead Air Watchdog] DEAD AIR on {n} inputs',
+    'group.alarm.body': 'These {n} inputs have gone down together:\n{list}\nAlert sent: {now}\nMachine: {host}',
+    'group.alarm.line': '- {input}: {cause}, since {start}',
+    'group.recovered.subject': '[Dead Air Watchdog] Audio back on {n} inputs',
+    'group.recovered.body': 'Audio is back on these {n} inputs:\n{list}\nMachine: {host}',
+    'group.recovered.line': '- {input}: {duration} (from {start} to {end})',
+    'tip.paused': 'Alerts paused',
+    'desktop.updatedTo': 'Updated to version {version}',
     'tray.open': 'Open Dead Air Watchdog',
     'tray.start': 'Start monitoring',
     'tray.stop': 'Stop monitoring',
@@ -57,6 +65,14 @@ const MSG = {
     'err.telegramToken': 'Token del bot Telegram non valido (atteso qualcosa come 123456789:AA…)',
     'update.subject': '[Dead Air Watchdog] Nuova versione {latest} disponibile',
     'update.body': 'È disponibile la versione {latest} di Dead Air Watchdog (installata: {current}).\nApri l\'app: Impostazioni → Aggiornamenti propone "Scarica l\'installer".\n{url}',
+    'group.alarm.subject': '[Dead Air Watchdog] DEAD AIR su {n} ingressi',
+    'group.alarm.body': 'Questi {n} ingressi sono caduti insieme:\n{list}\nAvviso inviato: {now}\nMacchina: {host}',
+    'group.alarm.line': '- {input}: {cause}, dalle {start}',
+    'group.recovered.subject': '[Dead Air Watchdog] Audio ripristinato su {n} ingressi',
+    'group.recovered.body': 'L\'audio è tornato su questi {n} ingressi:\n{list}\nMacchina: {host}',
+    'group.recovered.line': '- {input}: {duration} (da {start} a {end})',
+    'tip.paused': 'Avvisi in pausa',
+    'desktop.updatedTo': 'Aggiornato alla versione {version}',
     'tray.open': 'Apri Dead Air Watchdog',
     'tray.start': 'Avvia il monitoraggio',
     'tray.stop': 'Ferma il monitoraggio',
@@ -92,6 +108,14 @@ const MSG = {
     'err.telegramToken': 'Token del bot de Telegram no válido (se espera algo como 123456789:AA…)',
     'update.subject': '[Dead Air Watchdog] Nueva versión {latest} disponible',
     'update.body': 'Ya está disponible la versión {latest} de Dead Air Watchdog (instalada: {current}).\nAbre la aplicación: Ajustes → Actualizaciones ofrece "Descargar el instalador".\n{url}',
+    'group.alarm.subject': '[Dead Air Watchdog] DEAD AIR en {n} entradas',
+    'group.alarm.body': 'Estas {n} entradas han caído a la vez:\n{list}\nAviso enviado: {now}\nEquipo: {host}',
+    'group.alarm.line': '- {input}: {cause}, desde {start}',
+    'group.recovered.subject': '[Dead Air Watchdog] Audio recuperado en {n} entradas',
+    'group.recovered.body': 'El audio ha vuelto en estas {n} entradas:\n{list}\nEquipo: {host}',
+    'group.recovered.line': '- {input}: {duration} (de {start} a {end})',
+    'tip.paused': 'Avisos en pausa',
+    'desktop.updatedTo': 'Actualizado a la versión {version}',
     'tray.open': 'Abrir Dead Air Watchdog',
     'tray.start': 'Iniciar la monitorización',
     'tray.stop': 'Detener la monitorización',
@@ -109,6 +133,18 @@ const MSG = {
     'input.defaultDevice': 'entrada de audio predeterminada'
   }
 };
+
+export const APP_NAME = 'Dead Air Watchdog';
+const HAS_PREFIX = /^\[Dead Air Watchdog( · [^\]\n]*)?\]/;
+// Which installation speaks: the name the user gave, else the computer name (several PCs in a studio).
+export const installationName = (settings, host = '') => String(settings?.installationName || host || '').trim();
+export const alertPrefix = (settings, host = '') => {
+  const n = installationName(settings, host);
+  return n ? `[${APP_NAME} · ${n}]` : `[${APP_NAME}]`;
+};
+// Puts the prefix with the installation name in place of the plain one at the start of a subject or text.
+export const withPrefix = (text, prefix) => (HAS_PREFIX.test(text) ? text.replace(HAS_PREFIX, prefix) : text);
+export const hasPrefix = (text) => HAS_PREFIX.test(text);
 
 export const MESSAGE_KEYS = Object.keys(MSG.en);
 export const MESSAGES = MSG;
@@ -148,4 +184,15 @@ export function buildAlert(lang, kind, d) {
     host: d.host
   };
   return { subject: t(lang, `${kind}.subject`, vars), text: t(lang, `${kind}.body`, vars) };
+}
+
+// One message for several inputs that failed (kind 'alarm') or came back (kind 'recovered') together.
+// items: [{ input, cause, start, end, durationMs }]; d: { now, host }.
+export function buildGroupAlert(lang, kind, items, d) {
+  const when = (ts) => formatDateTime(ts, lang);
+  const list = items
+    .map((i) => t(lang, `group.${kind}.line`, { input: i.input, cause: t(lang, `cause.${i.cause || 'silence'}`), start: when(i.start), end: i.end ? when(i.end) : '', duration: formatDuration(i.durationMs ?? 0) }))
+    .join('\n');
+  const vars = { n: items.length, list, now: when(d.now), host: d.host };
+  return { subject: t(lang, `group.${kind}.subject`, vars), text: t(lang, `group.${kind}.body`, vars) };
 }

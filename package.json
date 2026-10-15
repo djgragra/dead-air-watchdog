@@ -38,6 +38,7 @@
       "src/**/*",
       "renderer/**/*",
       "assets/**/*",
+      "CHANGELOG.md",
       "package.json"
     ],
     "directories": {

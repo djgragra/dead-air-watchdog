@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage, nativeTheme, Notification, shell, session, systemPreferences, safeStorage, powerSaveBlocker, net } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage, nativeTheme, Notification, shell, session, systemPreferences, safeStorage, powerSaveBlocker, net, screen } from 'electron';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -6,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { createStore } from './src/store.js';
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
-import { checkForUpdate, downloadInstaller } from './src/updater.js';
+import { checkForUpdate, downloadInstaller, sweepPartials, bannerState, remindLaterState, skipVersionState, makeSafetyCopy, installPlan, whatsNew, startupKind } from './src/updater.js';
+import { createLogger } from './src/logs.js';
+import { buildSupportInfo } from './src/support.js';
 import { createAlertState } from './src/alert-state.js';
 import { createUpdateNotice } from './src/update-notice.js';
 import { buildExport, prepareImport, backupFileName, MAX_BACKUP_BYTES } from './src/backup.js';
@@ -17,7 +20,7 @@ import { shardInputs } from './src/engine-shards.js';
 import { aggregateDeadAir } from './src/core/stats.js';
 import { toCsv, toJson } from './src/core/export.js';
 import { formatDuration } from './src/core/format.js';
-import { t } from './src/messages.js';
+import { t, alertPrefix, installationName, withPrefix } from './src/messages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -25,6 +28,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 if (process.env.DAW_USER_DATA) app.setPath('userData', process.env.DAW_USER_DATA);
 
 if (!app.requestSingleInstanceLock()) app.quit();
+
+// Log: one file per day in <userData>/logs (7 days, 5 MB each), also shown to support ("Open logs folder")
+const logger = createLogger({ dir: path.join(app.getPath('userData'), 'logs'), retentionDays: 7 });
+const clog = (message, level = 'info', scope = '') => logger.log(level === 'error' ? 'error' : level === 'warn' ? 'warn' : 'info', message, scope);
+const settingsFile = () => path.join(app.getPath('userData'), 'dead-air-watchdog.json');
+let hadSettingsFile = false;
 
 let store;
 let monitor;
@@ -120,7 +129,7 @@ function createEngineWindow(index) {
   eng.win.loadFile(path.join(__dirname, 'renderer', 'engine.html'));
   // The engine must never stay dead silently: a crashed or frozen renderer is replaced.
   const restart = (why) => {
-    console.error(`engine ${index} restart:`, why);
+    clog(`engine ${index} restart: ${why}`, 'warn', 'engine');
     const old = eng.win;
     eng.win = null;
     if (old && !old.isDestroyed()) old.destroy();
@@ -193,11 +202,37 @@ function fromEngine(channel, handler) {
 }
 
 // ---- main window ------------------------------------------------------------------------
+// the saved window is used only if it still lies on a screen that exists (a monitor may have been unplugged)
+function savedBounds() {
+  const w = store.getSettings().window;
+  const out = { width: w.width, height: w.height };
+  if (w.x !== null && w.y !== null) {
+    const visible = screen.getAllDisplays().some((d) => w.x + 80 > d.bounds.x && w.x < d.bounds.x + d.bounds.width - 80 && w.y >= d.bounds.y && w.y < d.bounds.y + d.bounds.height - 80);
+    if (visible) {
+      out.x = w.x;
+      out.y = w.y;
+    }
+  }
+  return out;
+}
+
+let boundsTimer = null;
+function rememberWindow() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible() || mainWindow.isFullScreen()) return;
+  const b = mainWindow.getNormalBounds(); // the place and size it has when not maximized
+  store.updateSettings({ window: { x: b.x, y: b.y, width: b.width, height: b.height, maximized: mainWindow.isMaximized() } });
+}
+const rememberWindowSoon = () => {
+  clearTimeout(boundsTimer);
+  boundsTimer = setTimeout(rememberWindow, 600);
+};
+
 function createWindow() {
   const settings = store.getSettings();
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 780,
+    ...savedBounds(),
     minWidth: 760,
     minHeight: 560,
     show: false,
@@ -213,8 +248,10 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   const hidden = settings.general.startMinimized && app.getLoginItemSettings().wasOpenedAtLogin;
   mainWindow.once('ready-to-show', () => {
+    if (settings.window.maximized) mainWindow.maximize();
     if (!hidden) mainWindow.show();
   });
+  for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) mainWindow.on(ev, rememberWindowSoon);
   mainWindow.on('leave-full-screen', () => {
     if (wallBlockerId !== null) {
       powerSaveBlocker.stop(wallBlockerId);
@@ -223,6 +260,7 @@ function createWindow() {
     sendUi('event:wall-exit');
   });
   mainWindow.on('close', (e) => {
+    rememberWindow();
     if (isQuitting) return;
     e.preventDefault();
     mainWindow.hide();
@@ -251,7 +289,7 @@ function trayImage(state) {
 function updateTray(status) {
   if (!tray) return;
   const overall = status?.running ? status.overall : 'idle';
-  const state = overall === 'starting' ? 'idle' : overall;
+  const state = overall === 'starting' || overall === 'paused' ? 'idle' : overall;
   const key = `${state}|${status?.running}|${lang()}|${status?.inputs?.length ?? 0}`;
   if (key === trayKey) return;
   trayKey = key;
@@ -340,25 +378,39 @@ function desktopNotify(kind, d) {
   const s = store.getSettings();
   if (!s.notifications.desktop || !Notification.isSupported()) return;
   const body = kind === 'alarm' ? t(s.language, 'desktop.alarm', { input: d.input }) : t(s.language, 'desktop.recovered', { input: d.input, duration: formatDuration(d.durationMs) });
-  const n = new Notification({ title: 'Dead Air Watchdog', body, urgency: kind === 'alarm' ? 'critical' : 'normal' });
+  const n = new Notification({ title: alertPrefix(s, os.hostname()).slice(1, -1), body, urgency: kind === 'alarm' ? 'critical' : 'normal' });
   n.on('click', showWindow);
   n.show();
 }
 
 // New version: email / Telegram, once per version and per channel (see src/update-notice.js)
 function announceUpdate() {
-  if (updateInfo?.available) updateNotice?.announce(updateInfo).catch((err) => console.warn(`[update-notice] ${err.message}`));
+  if (updateInfo?.available) updateNotice?.announce(updateInfo).catch((err) => clog(err.message, 'warn', 'update-notice'));
 }
+
+// ---- guided update (apps/COMMON-FEATURES.md, section 4) ------------------------------------------------------
+let downloadedFile = null;
+let downloadedFor = null;
+let downloadAbort = null;
+// what the window may know: the installer's name and size, never a URL
+const publicInfo = (info) => info && { ...info, installer: info.installer ? { name: info.installer.name, size: info.installer.size } : null, sumsUrl: undefined, canDownload: !!(info.installer && info.sumsUrl) };
+const updateView = (info) => ({ info: publicInfo(info), banner: bannerState(info, store.getSettings().updateState), lastCheck: store.getSettings().updateState.lastCheck, downloaded: downloadedFile && info?.available ? path.basename(downloadedFile) : null });
+const setUpdateState = (patch) => store.updateSettings({ updateState: { ...store.getSettings().updateState, ...patch } });
 
 function checkUpdatesNow(manual) {
   const s = store.getSettings();
   return checkForUpdate({ repo: s.general.updateRepo, current: app.getVersion(), fetchFn: (u, o) => net.fetch(u, o) }).then((r) => {
+    if (r.ok) updateInfo = r;
+    if (downloadedFor && (!r.ok || r.latest !== downloadedFor)) {
+      downloadedFile = null; // a newer release came out: download again
+      downloadedFor = null;
+    }
+    setUpdateState({ lastCheck: { at: Date.now(), ok: !!r.ok, error: r.ok ? '' : String(r.error || '') } });
     if (r.ok && r.available) {
-      updateInfo = r;
-      sendUi('event:update-available', r);
+      sendUi('event:update-available', updateView(r));
       announceUpdate();
-    } else if (manual) updateInfo = r.ok ? r : null;
-    return r;
+    }
+    return updateView(r);
   });
 }
 
@@ -499,23 +551,126 @@ function registerIpc() {
   });
 
   handle('update:check', () => checkUpdatesNow(true));
+  handle('update:state', () => updateView(updateInfo));
   handle('update:download', async () => {
     if (!updateInfo?.available) return { ok: false, error: 'no-update' };
+    if (downloadAbort) return { ok: false, error: 'busy' };
+    downloadAbort = new AbortController();
     try {
-      const file = await downloadInstaller({ info: updateInfo, dir: app.getPath('downloads'), fetchFn: (u, o) => net.fetch(u, o), current: app.getVersion(), onProgress: (got, total) => sendUi('event:update-progress', { got, total }) });
-      return { ok: true, file };
+      sweepPartials(app.getPath('downloads')); // leftovers of an earlier interrupted download
+      downloadedFile = await downloadInstaller({
+        info: updateInfo,
+        dir: app.getPath('downloads'),
+        fetchFn: (u, o) => net.fetch(u, o),
+        current: app.getVersion(),
+        signal: downloadAbort.signal,
+        onProgress: (got, total) => sendUi('event:update-progress', { got, total })
+      });
+      downloadedFor = updateInfo.latest;
+      clog(`update ${updateInfo.latest} downloaded and verified (SHA-256)`, 'info', 'update');
+      return { ok: true, file: path.basename(downloadedFile) };
     } catch (err) {
-      return { ok: false, error: err.message };
+      downloadedFile = null;
+      downloadedFor = null;
+      const cancelled = downloadAbort?.signal.aborted;
+      if (!cancelled) clog(`update download failed: ${err.message}`, 'warn', 'update');
+      return { ok: false, error: cancelled ? 'cancelled' : err.message };
+    } finally {
+      downloadAbort = null;
     }
   });
-  handle('update:reveal', (file) => {
-    if (typeof file === 'string' && path.dirname(file) === app.getPath('downloads')) shell.showItemInFolder(file);
+  handle('update:cancel', () => {
+    downloadAbort?.abort();
+    return true;
+  });
+  handle('update:remind', () => {
+    setUpdateState(remindLaterState(store.getSettings().updateState));
+    return updateView(updateInfo);
+  });
+  handle('update:skip', () => {
+    setUpdateState(skipVersionState(store.getSettings().updateState, updateInfo?.latest));
+    return updateView(updateInfo);
+  });
+  // "Close and install": monitoring stops until the app is open again, so it asks first; a safety copy of the settings goes first
+  handle('update:install', (confirmed) => {
+    if (!downloadedFile || !fs.existsSync(downloadedFile)) return { ok: false, error: 'no-file' };
+    if (monitor.isRunning() && confirmed !== true) return { ok: false, error: 'confirm', running: true };
+    store.flush();
+    try {
+      makeSafetyCopy({ file: settingsFile(), dir: path.join(app.getPath('userData'), 'backups'), version: updateInfo?.current || app.getVersion() });
+    } catch (err) {
+      return { ok: false, error: `safety copy: ${err.message}` };
+    }
+    const plan = installPlan(process.platform, downloadedFile);
+    clog(`installing update ${updateInfo?.latest || ''} (${plan.kind})`, 'info', 'update');
+    if (plan.kind === 'run-installer') {
+      spawn(plan.file, [], { detached: true, stdio: 'ignore' }).unref();
+      isQuitting = true; // really quits: no hiding in the tray
+      setTimeout(() => app.quit(), 300);
+    } else if (plan.kind === 'open-image') shell.openPath(plan.file);
+    else shell.showItemInFolder(plan.file);
+    return { ok: true, kind: plan.kind, hint: plan.hint || null, quit: plan.quit };
+  });
+  handle('update:reveal', () => {
+    if (downloadedFile && fs.existsSync(downloadedFile)) shell.showItemInFolder(downloadedFile);
   });
   handle('update:open-page', () => {
     if (updateInfo?.url) shell.openExternal(updateInfo.url);
   });
+  // after a start of a newer version: the window with what changed, once
+  handle('whatsnew:get', () => {
+    if (startKind !== 'updated') return null;
+    let text = '';
+    try {
+      text = fs.readFileSync(path.join(__dirname, 'CHANGELOG.md'), 'utf8');
+    } catch {
+      /* not packaged */
+    }
+    return whatsNew(text, app.getVersion()) || { version: app.getVersion(), date: '', bullets: [] };
+  });
+  handle('whatsnew:seen', () => {
+    startKind = 'same';
+    store.updateSettings({ lastSeenVersion: app.getVersion() });
+    return true;
+  });
 
-  handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: app.isPackaged, host: os.hostname() }));
+  // maintenance of one input: mode '1h' | 'tomorrow' (next 06:00) | 'off'
+  handle('monitor:pause', (inputId, mode) => {
+    if (typeof inputId !== 'string') return { ok: false };
+    if (mode === 'off') return monitor.resumeInput(inputId, 'manual');
+    const t0 = Date.now();
+    let until = t0 + 3_600_000;
+    if (mode === 'tomorrow') {
+      const d = new Date(t0);
+      d.setDate(d.getDate() + 1);
+      d.setHours(6, 0, 0, 0);
+      until = d.getTime();
+    } else if (mode !== '1h') return { ok: false };
+    return monitor.pauseInput(inputId, until);
+  });
+
+  // Help & About: what to send to whoever helps. Never settings values, addresses, tokens, recipients or file names the user chose.
+  handle('app:support-info', () => {
+    const s = store.getSettings();
+    const lastError = logger.entries().filter((e) => e.level === 'error').at(-1);
+    return buildSupportInfo({
+      app: 'Dead Air Watchdog',
+      version: app.getVersion(),
+      electron: process.versions.electron,
+      chrome: process.versions.chrome,
+      platform: process.platform,
+      arch: process.arch,
+      osRelease: os.release(),
+      language: s.language,
+      installationName: installationName(s, os.hostname()),
+      lastCheck: s.updateState.lastCheck,
+      lastError,
+      home: os.homedir()
+    });
+  });
+  handle('logs:open-folder', () => shell.openPath(path.join(app.getPath('userData'), 'logs')));
+
+  handle('app:info', () => ({ version: app.getVersion(), platform: process.platform, arch: process.arch, packaged: app.isPackaged, host: os.hostname(), logsDir: path.join(app.getPath('userData'), 'logs') }));
   handle('app:open-external', (url) => {
     if (typeof url === 'string' && EXTERNAL_OK.some((re) => re.test(url))) shell.openExternal(url);
   });
@@ -525,8 +680,22 @@ function registerIpc() {
 // ---- start-up ----------------------------------------------------------------------------------
 app.on('second-instance', showWindow);
 
+// After a start of a newer version: a notice, and the window with what changed (once)
+let startKind = 'same';
+function announceStartup() {
+  const s = store.getSettings();
+  startKind = startupKind(s.lastSeenVersion, app.getVersion(), hadSettingsFile);
+  if (startKind === 'first') store.updateSettings({ lastSeenVersion: app.getVersion() });
+  else if (startKind === 'updated' && Notification.isSupported()) {
+    const n = new Notification({ title: alertPrefix(s, os.hostname()).slice(1, -1), body: t(s.language, 'desktop.updatedTo', { version: app.getVersion() }) });
+    n.on('click', showWindow);
+    n.show();
+  }
+}
+
 app.whenReady().then(() => {
-  store = createStore({ file: path.join(app.getPath('userData'), 'dead-air-watchdog.json'), seal, open });
+  hadSettingsFile = fs.existsSync(settingsFile());
+  store = createStore({ file: settingsFile(), seal, open });
   // rewrite secrets saved before the keystore was available
   store.updateSettings({});
   store.flush();
@@ -538,7 +707,8 @@ app.whenReady().then(() => {
     alertState,
     send: (channel, subject, text) => {
       const st = store.getSettings();
-      return channel === 'email' ? sendEmail({ ...st.notifications.email, enabled: true }, subject, text, st.language) : sendTelegram({ ...st.notifications.telegram, enabled: true }, text, st.language, (u, o) => net.fetch(u, o));
+      const prefix = alertPrefix(st, os.hostname());
+      return channel === 'email' ? sendEmail({ ...st.notifications.email, enabled: true }, withPrefix(subject, prefix), text, st.language) : sendTelegram({ ...st.notifications.telegram, enabled: true }, text, st.language, (u, o) => net.fetch(u, o), prefix);
     },
     notifyDesktop: (body) => {
       if (!Notification.isSupported()) return;
@@ -546,16 +716,17 @@ app.whenReady().then(() => {
       n.on('click', showWindow);
       n.show();
     },
-    log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[update-notice] ${m}`)
+    log: (m, level) => clog(m, level, 'update-notice')
   });
   dispatcher = createDispatcher({
     getSettings: () => store.getSettings(),
+    host: os.hostname(),
     onResult: (r) => {
       if (r.ok) deliveryFaults.delete(r.channel);
       else deliveryFaults.set(r.channel, { error: r.error, giveUp: !!r.giveUp, label: r.label, at: Date.now() });
       sendUi('event:delivery', faultList());
     },
-    log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[notify] ${m}`) });
+    log: (m, level) => clog(m, level, 'notify') });
   monitor = createMonitor({
     store,
     engine,
@@ -570,7 +741,7 @@ app.whenReady().then(() => {
     desktopNotify,
     alarmSound: setAlarmSound,
     host: os.hostname(),
-    log: (m, level) => console[level === 'error' ? 'error' : 'log'](`[monitor] ${m}`)
+    log: (m, level) => clog(m, level, 'monitor')
   });
 
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')));
@@ -592,16 +763,25 @@ app.whenReady().then(() => {
     msg.error ? w.reject(new Error(msg.error)) : w.resolve(msg.result);
   });
 
-  heartbeat = createHeartbeat({ getSettings: () => store.getSettings(), fetchFn: (u, o) => net.fetch(u, o), version: app.getVersion(), log: (m, level) => console[level === 'info' ? 'log' : 'warn'](`[heartbeat] ${m}`) });
+  heartbeat = createHeartbeat({ getSettings: () => store.getSettings(), fetchFn: (u, o) => net.fetch(u, o), version: app.getVersion(), log: (m, level) => clog(m, level, 'heartbeat') });
   registerIpc();
   createEngineWindow(0);
   createWindow();
   createTray();
   applyGeneralSettings(store.getSettings());
 
+  clog(`Dead Air Watchdog ${app.getVersion()} started (${process.platform} ${process.arch}, Electron ${process.versions.electron})`, 'info', 'app');
+  logger.prune();
+  sweepPartials(app.getPath('downloads'));
+  announceStartup();
   monitor.recoverFromPreviousRun();
-  store.pruneEvents(store.getSettings().general.retentionDays);
-  setInterval(() => store.pruneEvents(store.getSettings().general.retentionDays), 6 * 3600_000);
+  const prune = () => {
+    const g = store.getSettings().general;
+    store.pruneEvents(g.retentionDays, { blipDays: g.microRetentionDays });
+    logger.prune();
+  };
+  prune();
+  setInterval(prune, 6 * 3600_000);
 
   const s = store.getSettings();
   if (s.general.autoStartMonitoring && hasUsableInput(s)) startMonitoring();
@@ -622,7 +802,7 @@ app.on('before-quit', () => {
     dispatcher?.cancelPending();
     store?.flush();
   } catch (err) {
-    console.error(err);
+    clog(String(err?.stack || err), 'error', 'quit');
   }
 });
 

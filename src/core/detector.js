@@ -15,30 +15,39 @@
 // Events returned by feed():
 //   { type: 'alarm',     start, at, cause }
 //   { type: 'recovered', start, end, durationMs, cause }
+// With the option `blips: true` a drop below the threshold that ends before the alarm (the yellow phase, however
+// short) is reported too, once audio is back:
+//   { type: 'blip',      start, end, durationMs, cause }   cause: 'silence' | 'nodata' | 'late'
+// feed() takes a third argument that says why a sample is below the threshold when it carries no level:
+// 'nodata' (the input is stopped or failed) or 'late' (no measurement arrived in time); a level that is simply low
+// is 'silence'. The cause of a blip is the first of nodata, late, silence that occurred during it. Nothing about the
+// alarm changes: it still needs minSilenceMs below the threshold.
 
-export const DEFAULTS = Object.freeze({ thresholdDb: -50, minSilenceMs: 30_000, releaseMs: 2_000 });
+export const DEFAULTS = Object.freeze({ thresholdDb: -50, minSilenceMs: 30_000, releaseMs: 2_000, blips: false });
+const BLIP_CAUSES = ['nodata', 'late', 'silence'];
 
 export function createDetector(options = {}) {
   let cfg = { ...DEFAULTS, ...options };
   let st = fresh();
 
   function fresh() {
-    return { status: 'idle', silenceStart: null, aboveSince: null, cause: null };
+    return { status: 'idle', silenceStart: null, aboveSince: null, cause: null, seen: new Set() };
   }
 
   function isBelow(levelDb) {
     return levelDb === null || levelDb === undefined || Number.isNaN(levelDb) || levelDb < cfg.thresholdDb;
   }
 
-  function feed(levelDb, now) {
+  function feed(levelDb, now, reason) {
     const events = [];
     const below = isBelow(levelDb);
+    const why = reason || (levelDb === null || levelDb === undefined ? 'nodata' : 'silence');
 
     switch (st.status) {
       case 'idle':
       case 'ok':
         if (below) {
-          st = { status: 'counting', silenceStart: now, aboveSince: null, cause: null };
+          st = { status: 'counting', silenceStart: now, aboveSince: null, cause: null, seen: new Set() };
         } else {
           st.status = 'ok';
           break;
@@ -46,6 +55,7 @@ export function createDetector(options = {}) {
       // falls through: the countdown may already be due when minSilenceMs is 0
       case 'counting':
         if (below) {
+          st.seen.add(why);
           st.aboveSince = null;
           if (now - st.silenceStart >= cfg.minSilenceMs) {
             st.status = 'alarm';
@@ -54,7 +64,10 @@ export function createDetector(options = {}) {
           }
         } else {
           if (st.aboveSince === null) st.aboveSince = now;
-          if (now - st.aboveSince >= cfg.releaseMs) st = { ...fresh(), status: 'ok' };
+          if (now - st.aboveSince >= cfg.releaseMs) {
+            if (cfg.blips) events.push({ type: 'blip', start: st.silenceStart, end: st.aboveSince, durationMs: st.aboveSince - st.silenceStart, cause: BLIP_CAUSES.find((c) => st.seen.has(c)) || 'silence' });
+            st = { ...fresh(), status: 'ok' };
+          }
         }
         break;
       case 'alarm':

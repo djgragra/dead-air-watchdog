@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('api', {
     update: (patch) => invoke('settings:update', patch)
   },
   monitor: {
+    pause: (inputId, mode) => invoke('monitor:pause', inputId, mode),
     start: () => invoke('monitor:start'),
     stop: () => invoke('monitor:stop'),
     status: () => invoke('monitor:status'),
@@ -55,11 +56,20 @@ contextBridge.exposeInMainWorld('api', {
   },
   updates: {
     check: () => invoke('update:check'),
+    state: () => invoke('update:state'),
     download: () => invoke('update:download'),
-    reveal: (file) => invoke('update:reveal', file),
-    openPage: () => invoke('update:open-page')
+    cancel: () => invoke('update:cancel'),
+    remind: () => invoke('update:remind'),
+    skip: () => invoke('update:skip'),
+    install: (confirmed) => invoke('update:install', confirmed),
+    reveal: () => invoke('update:reveal'),
+    openPage: () => invoke('update:open-page'),
+    whatsNew: () => invoke('whatsnew:get'),
+    whatsNewSeen: () => invoke('whatsnew:seen')
   },
   app: {
+    supportInfo: () => invoke('app:support-info'),
+    openLogs: () => invoke('logs:open-folder'),
     info: () => invoke('app:info'),
     openExternal: (url) => invoke('app:open-external', url)
   },

@@ -8,7 +8,7 @@ export const BACKUP_APP = 'dead-air-watchdog';
 export const BACKUP_VERSION = 1;
 export const MAX_BACKUP_BYTES = 2_000_000;
 // kept on this PC, not part of the file: what the user was told once
-const RUNTIME_KEYS = ['micExplained', 'closeHintShown'];
+const RUNTIME_KEYS = ['micExplained', 'closeHintShown', 'updateState', 'lastSeenVersion', 'window'];
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const dateStamp = (ms) => new Date(ms).toISOString().slice(0, 10);
