@@ -26,10 +26,14 @@ export const DEFAULT_SETTINGS = Object.freeze({
   language: 'en', // 'en' | 'it' | 'es' — the app always starts in English until the user changes it
   theme: 'dark', // 'dark' | 'light' | 'auto'
   inputs: [], // see DEFAULT_INPUT: at most one sound card and any number of streams (MAX_INPUTS in total)
+  installationName: '', // shown in alerts as [Dead Air Watchdog · name]; empty = the computer name
   display: {
     edgeGlow: 'wall', // screen-edge glow: 'wall' (only in wall display) | 'always' | 'off'
     startInWall: false, // open straight into the full-screen wall display (control-room monitor)
-    wallNameSize: 'auto' // size of the input names in the wall display: 'auto' (shrinks long names to fit) | 'large' | 'medium' | 'small'
+    wallNameSize: 'auto', // size of the input names in the wall display: 'auto' (shrinks long names to fit) | 'large' | 'medium' | 'small'
+    wallLogo: 'large', // logo of an input in the wall display: 'small' | 'large' | 'faded' (big, soft, behind the tile)
+    wallLogoOpacity: 0.2, // how strong the 'faded' logo is (0.05 to 0.5)
+    wallClock: 'max' // size of the clock and date in the wall display: 'max' (as large as fits) | 'large' | 'normal'
   },
   notifications: {
     desktop: true,
@@ -37,7 +41,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
     sound: { enabled: false, volume: 0.6 }, // audible alarm on this computer while dead air lasts
     email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: [] }, // recipients: [address], all sent in Bcc
     telegram: { enabled: false, botToken: '', recipients: [] }, // recipients: [{ chatId, note }]
-    updateAlert: true // tell by email / Telegram, once per version, that a new version is out
+    updateAlert: true, // tell by email / Telegram, once per version, that a new version is out
+    grouping: { enabled: true, windowSec: 60, firstNow: true } // several inputs failing (or coming back) together: one message with the list
   },
   general: {
     startOnBoot: true,
@@ -45,12 +50,16 @@ export const DEFAULT_SETTINGS = Object.freeze({
     autoStartMonitoring: true,
     keepAwake: true,
     retentionDays: 365,
+    microRetentionDays: 30, // brief drops below the threshold (micro-silences) are kept for less time than the alarms
     checkUpdates: true,
     updateRepo: 'djgragra/dead-air-watchdog'
   },
   heartbeat: { enabled: false, url: '', intervalMin: 5 }, // dead man's switch: GET to a service that alerts when pings stop
   micExplained: false, // the permission explanation was shown and accepted
-  closeHintShown: false
+  closeHintShown: false,
+  updateState: { skipVersion: '', remindUntil: 0, lastCheck: null }, // what the user decided about a new version; lastCheck { at, ok, error }
+  lastSeenVersion: '', // the version that last ran: a newer one at start-up means "updated" (What's new window)
+  window: { x: null, y: null, width: 1180, height: 780, maximized: false } // remembered place and size of the main window
 });
 
 // GitHub "owner/repo": owner letters, digits, hyphens; repo letters, digits, "_", "-", "." (not "." or "..").
@@ -107,6 +116,10 @@ export function sanitizeSettings(s) {
   if (!['wall', 'always', 'off'].includes(out.display.edgeGlow)) out.display.edgeGlow = d.display.edgeGlow;
   out.display.startInWall = !!out.display.startInWall;
   if (!['auto', 'large', 'medium', 'small'].includes(out.display.wallNameSize)) out.display.wallNameSize = d.display.wallNameSize;
+  if (!['small', 'large', 'faded'].includes(out.display.wallLogo)) out.display.wallLogo = d.display.wallLogo;
+  out.display.wallLogoOpacity = Math.round(clamp(out.display.wallLogoOpacity, 0.05, 0.5, d.display.wallLogoOpacity) * 100) / 100;
+  if (!['max', 'large', 'normal'].includes(out.display.wallClock)) out.display.wallClock = d.display.wallClock;
+  out.installationName = String(out.installationName || '').trim().slice(0, 60);
   const used = new Set();
   let hasDevice = false;
   out.inputs = (Array.isArray(out.inputs) ? out.inputs : [])
@@ -135,7 +148,19 @@ export function sanitizeSettings(s) {
     .map((r) => ({ chatId: String(r?.chatId ?? '').trim(), note: String(r?.note ?? '').trim().slice(0, 80) }))
     .filter((r) => r.chatId)
     .slice(0, 20);
+  const gr = out.notifications.grouping;
+  gr.enabled = gr.enabled !== false;
+  gr.windowSec = Math.round(clamp(gr.windowSec, 10, 600, 60));
+  gr.firstNow = gr.firstNow !== false;
   out.general.retentionDays = Math.round(clamp(out.general.retentionDays, 30, 3650, 365));
+  out.general.microRetentionDays = Math.round(clamp(out.general.microRetentionDays, 1, 365, 30));
+  const us = isObj(out.updateState) ? out.updateState : {};
+  const lc = isObj(us.lastCheck) && Number.isFinite(us.lastCheck.at) ? { at: us.lastCheck.at, ok: !!us.lastCheck.ok, error: String(us.lastCheck.error || '').slice(0, 300) } : null;
+  out.updateState = { skipVersion: String(us.skipVersion || '').slice(0, 40), remindUntil: Number.isFinite(us.remindUntil) ? us.remindUntil : 0, lastCheck: lc };
+  out.lastSeenVersion = String(out.lastSeenVersion || '').slice(0, 40);
+  const w = isObj(out.window) ? out.window : {};
+  const hasPos = Number.isFinite(w.x) && Number.isFinite(w.y);
+  out.window = { x: hasPos ? Math.round(w.x) : null, y: hasPos ? Math.round(w.y) : null, width: Math.round(clamp(w.width, 760, 8000, 1180)), height: Math.round(clamp(w.height, 560, 8000, 780)), maximized: !!w.maximized };
   if (!REPO_RE.test(out.general.updateRepo || '')) out.general.updateRepo = d.general.updateRepo;
   delete out.input;
   delete out.detection;
@@ -215,10 +240,19 @@ export function createStore({ file, seal = (v) => v, open = (v) => v, now = Date
       data.events = [];
       schedule();
     },
-    pruneEvents(retentionDays) {
-      const cutoff = now() - retentionDays * 86_400_000;
+    // retentionDays: alarms, gaps and pauses. Micro-silences (kind 'blip') are many and small: they are kept for
+    // `blipDays` and never more than `blipMax` of them (the oldest go first).
+    pruneEvents(retentionDays, { blipDays = 30, blipMax = 5000 } = {}) {
+      const t = now();
+      const cutoff = t - retentionDays * 86_400_000;
+      const blipCutoff = t - blipDays * 86_400_000;
       const before = data.events.length;
-      data.events = data.events.filter((e) => (e.end ?? e.start) >= cutoff);
+      data.events = data.events.filter((e) => (e.end ?? e.start) >= (e.kind === 'blip' ? blipCutoff : cutoff));
+      const blips = data.events.filter((e) => e.kind === 'blip');
+      if (blips.length > blipMax) {
+        const drop = new Set(blips.sort((a, b) => a.start - b.start).slice(0, blips.length - blipMax));
+        data.events = data.events.filter((e) => !drop.has(e));
+      }
       if (data.events.length !== before) schedule();
       return before - data.events.length;
     },

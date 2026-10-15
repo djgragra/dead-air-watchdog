@@ -4,7 +4,8 @@
 // Everything with side effects is injected so tests can drive it with a fake clock.
 import { createDetector } from './core/detector.js';
 import { loudestChannel } from './core/level.js';
-import { inputLabel, buildAlert } from './messages.js';
+import { inputLabel, buildAlert, buildGroupAlert } from './messages.js';
+import { createGrouper } from './grouping.js';
 
 export const TICK_MS = 250;
 const STALE_MS = 1500; // no level report for this long = the input delivers nothing
@@ -19,7 +20,7 @@ export const isUsable = (inp) => inp.enabled && (inp.type === 'device' || /^http
 // What the engine needs to open an input (nothing else leaves the settings).
 const engineInput = (i) => ({ id: i.id, type: i.type, deviceId: i.deviceId, channelPair: i.channelPair, streamUrl: i.streamUrl });
 
-export function createMonitor({ store, engine, dispatch, publish, desktopNotify = () => {}, alarmSound = () => {}, now = Date.now, host = 'this machine', log = () => {}, setIntervalFn = setInterval, clearIntervalFn = clearInterval }) {
+export function createMonitor({ store, engine, dispatch, publish, desktopNotify = () => {}, alarmSound = () => {}, now = Date.now, host = 'this machine', log = () => {}, setIntervalFn = setInterval, clearIntervalFn = clearInterval, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) {
   const chans = new Map(); // input id -> channel state
   let running = false;
   let startedAt = 0;
@@ -27,6 +28,10 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   let lastHeartbeat = 0;
   let timer = null;
   let lastStatusKey = '';
+  // Alerts for the maintenance of one input: { inputId -> { until, eventId } }, kept in the meta of the store so that a
+  // restart does not lift a pause (and the pause still ends by itself at `until`).
+  const pauses = new Map(Object.entries(store.getMeta().pauses || {}));
+  const savePauses = () => store.setMeta({ pauses: Object.fromEntries(pauses) });
 
   const settings = () => store.getSettings();
   const inputById = (id) => settings().inputs.find((i) => i.id === id);
@@ -35,7 +40,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function makeChannel(inp, t) {
     return {
       id: inp.id,
-      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000 }),
+      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, blips: true }),
       startedAt: t,
       lastSampleAt: null,
       windowMax: -Infinity,
@@ -52,9 +57,26 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     return { input: inputLabel(s.language, inp), thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec, host, now: now(), ...extra };
   }
 
+  // Several inputs failing (or coming back) together go out as one message (src/grouping.js); a lone one is not delayed.
+  const grouper = createGrouper({
+    getConfig: () => settings().notifications.grouping,
+    send: (m) => dispatch(m),
+    buildGroup: (kind, items) => ({ ...buildGroupAlert(settings().language, kind, items, { now: now(), host }), label: `group-${kind}:${items.length}` }),
+    setTimer: (fn, ms) => {
+      const h = setTimeoutFn(fn, ms);
+      h?.unref?.(); // a waiting group never keeps the process alive
+      return h;
+    },
+    clearTimer: clearTimeoutFn
+  });
+
   function send(inp, kind, extra) {
-    const { subject, text } = buildAlert(settings().language, kind, alertData(inp, extra));
-    dispatch({ subject, text, label: `${kind}:${inputLabel(settings().language, inp)}` });
+    const lang = settings().language;
+    const name = inputLabel(lang, inp);
+    const { subject, text } = buildAlert(lang, kind, alertData(inp, extra));
+    const single = { subject, text, label: `${kind}:${name}` };
+    if (kind === 'alarm' || kind === 'recovered') grouper.submit(kind, { input: name, cause: extra.cause, start: extra.start, end: extra.end, durationMs: extra.durationMs }, single);
+    else dispatch(single);
   }
 
   function addGap(start, end, cause) {
@@ -84,19 +106,25 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       if (!anyAlarm()) alarmSound(false);
       log(`${label}: recovered after ${Math.round(ev.durationMs / 1000)} s`, 'info');
       publish.events();
+    } else if (ev.type === 'blip') {
+      // a drop below the threshold that ended before the alarm: kept in the log, never sent anywhere
+      store.addEvent({ kind: 'blip', cause: ev.cause, start: ev.start, end: ev.end, input: label, inputId: inp.id, thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec });
+      publish.events();
     }
   }
 
-  // Closes an alarm that cannot continue to be observed (monitoring stopped, input removed, process suspended).
-  function closeOpenAlarm(ch, end) {
+  // Closes an alarm that cannot continue to be observed (monitoring stopped, input removed, process suspended, paused).
+  function closeOpenAlarm(ch, end, patch = { interrupted: true }) {
     const open = ch.detector.abort(end);
-    if (open && ch.openEventId) store.updateEvent(ch.openEventId, { end: open.end, interrupted: true });
+    if (open && ch.openEventId) store.updateEvent(ch.openEventId, { end: open.end, ...patch });
     ch.openEventId = null;
     if (open && !anyAlarm()) alarmSound(false);
     return open;
   }
 
   function channelStatus(ch) {
+    const p = pauses.get(ch.id);
+    if (p && p.until > now()) return { state: 'paused', cause: null, fault: ch.fault, elapsedMs: 0, remainingMs: 0, silenceStart: null, pausedUntil: p.until };
     const snap = ch.detector.snapshot(now());
     const waiting = ch.lastSampleAt === null && !ch.fault && now() - ch.startedAt < START_GRACE_MS;
     const state = waiting || snap.status === 'idle' ? 'starting' : snap.status;
@@ -107,17 +135,20 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     const s = settings();
     const inputs = s.inputs.map((inp) => {
       const base = { id: inp.id, name: inputLabel(s.language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec, channelPair: inp.channelPair };
+      const p = pauses.get(inp.id);
+      if (p && p.until > now()) base.pausedUntil = p.until;
       const ch = chans.get(inp.id);
       if (!running) return { ...base, state: 'idle' };
       if (!ch) return { ...base, state: inp.enabled ? 'incomplete' : 'off' };
       return { ...base, ...channelStatus(ch) };
     });
     const live = inputs.filter((i) => PRIORITY[i.state]);
-    const overall = !running || !live.length ? 'idle' : live.reduce((w, i) => (PRIORITY[i.state] > PRIORITY[w] ? i.state : w), 'ok');
+    const anyPaused = inputs.some((i) => i.state === 'paused');
+    const overall = !running ? 'idle' : !live.length ? (anyPaused ? 'paused' : 'idle') : live.reduce((w, i) => (PRIORITY[i.state] > PRIORITY[w] ? i.state : w), 'ok');
     const count = (st) => live.filter((i) => i.state === st).length;
     return {
       running,
-      overall, // idle | starting | ok | counting | alarm: the worst state of any input
+      overall, // idle | paused | starting | ok | counting | alarm: the worst state of any input (paused: all of them are)
       counts: { ok: count('ok'), counting: count('counting'), alarm: count('alarm'), starting: count('starting') },
       inputs,
       startedAt: running ? startedAt : null
@@ -126,7 +157,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
 
   function emitStatus(force = false) {
     const st = status();
-    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.state, i.fault, i.cause, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
+    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.state, i.fault, i.cause, i.pausedUntil || 0, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
     if (force || key !== lastStatusKey) {
       lastStatusKey = key;
       publish.status(st);
@@ -134,11 +165,21 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   }
 
   function tickChannel(ch, inp, t) {
+    const p = pauses.get(ch.id);
+    if (p) {
+      if (p.until > t) {
+        ch.windowMax = -Infinity; // measuring goes on in the window, but nothing is judged and nothing is sent
+        return;
+      }
+      api.resumeInput(ch.id, 'expired'); // the pause ends by itself: the countdown starts again from here
+    }
     const waitingForFirst = ch.lastSampleAt === null && !ch.fault && t - ch.startedAt < START_GRACE_MS;
     if (!waitingForFirst) {
       const stale = ch.lastSampleAt === null || t - ch.lastSampleAt > STALE_MS;
       const level = ch.fault || stale || ch.windowMax === -Infinity ? null : ch.windowMax;
-      for (const ev of ch.detector.feed(level, t)) handleEvent(ch, ev);
+      // why a sample without level counts as below: the input is stopped / failed ('nodata'), or the measurement is late ('late')
+      const reason = level === null ? (ch.fault ? 'nodata' : 'late') : undefined;
+      for (const ev of ch.detector.feed(level, t, reason)) handleEvent(ch, ev);
     }
     ch.windowMax = -Infinity;
     const rem = settings().notifications.reminderMin;
@@ -161,6 +202,8 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       addGap(lastTick, t, 'suspended');
     }
     lastTick = t;
+    // a pause that reached its end (also of an input that is no longer monitored) is closed in the log
+    for (const [id, p] of [...pauses]) if (p.until <= t || !inputById(id)) api.resumeInput(id, p.until <= t ? 'expired' : 'manual');
     for (const ch of chans.values()) {
       const inp = inputById(ch.id);
       if (inp) tickChannel(ch, inp, t);
@@ -181,9 +224,62 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       for (const e of store.listEvents()) {
         if (e.kind === 'dead-air' && e.end == null) store.updateEvent(e.id, { end: last ?? e.start, interrupted: true });
       }
+      // a pause survives a restart until its end; one that ended while the app was closed is closed in the log at its end
+      for (const e of store.listEvents()) {
+        if (e.kind !== 'pause' || e.end != null) continue;
+        const p = pauses.get(e.inputId);
+        if (p && p.eventId === e.id && p.until > t) continue;
+        store.updateEvent(e.id, { end: Math.min(p?.until ?? e.until ?? e.start, t) });
+        pauses.delete(e.inputId);
+      }
+      for (const [id, p] of [...pauses]) if (p.until <= t || !inputById(id)) pauses.delete(id);
+      savePauses();
       if (last && t - last > 60_000) addGap(last, t, meta.cleanExit ? 'quit' : 'unknown');
       store.setMeta({ lastHeartbeat: t, cleanExit: false });
     },
+
+    // Maintenance of one input: no alerts, no alarm sound, no alarm events until `untilMs`, then it starts again by
+    // itself (it cannot stay off by forgetting). The input is still measured and shown. Written in the log as a pause.
+    pauseInput(id, untilMs) {
+      const inp = inputById(id);
+      const t = now();
+      if (!inp || !Number.isFinite(untilMs) || untilMs <= t) return { ok: false };
+      const ch = chans.get(id);
+      let p = pauses.get(id);
+      if (p) p.until = untilMs;
+      else {
+        const rec = store.addEvent({ kind: 'pause', cause: 'maintenance', start: t, end: null, input: inputLabel(settings().language, inp), inputId: id, until: untilMs });
+        p = { until: untilMs, eventId: rec.id };
+        pauses.set(id, p);
+      }
+      store.updateEvent(p.eventId, { until: untilMs });
+      if (ch) {
+        closeOpenAlarm(ch, t, { pausedBy: true }); // an alarm that was open ends here, without a "recovered" message
+        ch.windowMax = -Infinity;
+      }
+      savePauses();
+      publish.events();
+      emitStatus(true);
+      return { ok: true, until: untilMs };
+    },
+
+    resumeInput(id, why = 'manual') {
+      const p = pauses.get(id);
+      if (!p) return { ok: false };
+      const t = now();
+      pauses.delete(id);
+      store.updateEvent(p.eventId, { end: Math.min(t, why === 'expired' ? p.until : t), ...(why === 'expired' ? { expired: true } : {}) });
+      const ch = chans.get(id);
+      if (ch) {
+        ch.detector.abort(t);
+        ch.windowMax = -Infinity;
+      }
+      savePauses();
+      publish.events();
+      emitStatus(true);
+      return { ok: true };
+    },
+
 
     // Returns false when there is nothing usable to monitor.
     start() {
@@ -209,6 +305,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       timer = null;
       for (const ch of chans.values()) closeOpenAlarm(ch, now());
       chans.clear();
+      grouper.flush(); // alerts still waiting for their window go out now
       engine.stop();
       if (cleanExit) store.setMeta({ lastHeartbeat: now(), cleanExit: true });
       publish.events();
@@ -228,6 +325,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
           chans.delete(id);
         }
       }
+      for (const id of [...pauses.keys()]) if (!inputById(id)) api.resumeInput(id, 'manual'); // the input was removed
       for (const inp of list) {
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));

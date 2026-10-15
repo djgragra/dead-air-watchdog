@@ -1,3 +1,4 @@
+// garage-common: secrets 1
 // The one list of every place that holds a secret. Sealing at rest, opening, the backup and the
 // "type it again" list all use it, so a new secret cannot be forgotten in one of them.
 // Settings here are the plain ones (as the app uses them), never the sealed ones on disk.

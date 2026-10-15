@@ -1,3 +1,4 @@
+// garage-common: backup 1
 // Configuration backup: build the file, read it back, say what must be typed again.
 // Electron-free and file-free (the main process asks for the file and applies the plan), so it can
 // be tested. Settings here are the plain ones; sealed values (enc:v1:) never come out of a file.
@@ -8,7 +9,7 @@ export const BACKUP_APP = 'dead-air-watchdog';
 export const BACKUP_VERSION = 1;
 export const MAX_BACKUP_BYTES = 2_000_000;
 // kept on this PC, not part of the file: what the user was told once
-const RUNTIME_KEYS = ['micExplained', 'closeHintShown'];
+const RUNTIME_KEYS = ['micExplained', 'closeHintShown', 'updateState', 'lastSeenVersion', 'window'];
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const dateStamp = (ms) => new Date(ms).toISOString().slice(0, 10);

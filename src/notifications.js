@@ -1,6 +1,6 @@
 // Alert delivery: email (SMTP via nodemailer) and Telegram (Bot API), with retry.
 // Credentials come from the user's settings only; nothing is hard-coded.
-import { t } from './messages.js';
+import { t, alertPrefix, withPrefix, hasPrefix } from './messages.js';
 import { parseAddresses } from './addresses.js';
 
 const TG_PREFIX = '[Dead Air Watchdog]';
@@ -40,13 +40,13 @@ export async function sendEmail(cfg, subject, text, lang = 'en', transportFactor
   }
 }
 
-export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.fetch) {
+export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.fetch, prefix = TG_PREFIX) {
   if (!cfg?.enabled) return;
   const recipients = (cfg.recipients || []).filter((r) => String(r?.chatId || '').trim());
   if (!cfg.botToken || !recipients.length) throw new Error(t(lang, 'err.telegramIncomplete'));
   if (!TELEGRAM_TOKEN_RE.test(cfg.botToken)) throw new Error(t(lang, 'err.telegramToken'));
   // the bot may be shared with other programs: always say who is writing
-  const body = clip(text.startsWith(TG_PREFIX) ? text : `${TG_PREFIX} ${text}`);
+  const body = clip(hasPrefix(text) ? text : `${prefix} ${text}`);
   const failures = [];
   for (const r of recipients) {
     try {
@@ -68,19 +68,21 @@ export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.
 // Sends one message on every enabled channel and retries the channels that failed.
 // During an outage the network is often down too, so a failed alert is retried with growing
 // pauses (30 s, 1 min, then every 2 min) for up to `maxAgeMs`; each channel stops when delivered.
-export function createDispatcher({ getSettings, log = () => {}, onResult = () => {}, delays = [30_000, 60_000, 120_000], maxAgeMs = 30 * 60_000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, deps = {} }) {
+export function createDispatcher({ getSettings, host = '', log = () => {}, onResult = () => {}, delays = [30_000, 60_000, 120_000], maxAgeMs = 30 * 60_000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, deps = {} }) {
   const mail = deps.sendEmail || sendEmail;
   const tg = deps.sendTelegram || sendTelegram;
   const pending = new Set();
 
   function dispatch({ subject, text, label }) {
     const lang = getSettings().language;
+    const prefix = alertPrefix(getSettings(), host); // [Dead Air Watchdog · installation name]
+    subject = withPrefix(subject, prefix);
     const started = now();
     const state = { email: 'todo', telegram: 'todo' };
     const errors = {};
     const channels = [
       ['email', (s) => mail(s.notifications.email, subject, text, lang)],
-      ['telegram', (s) => tg(s.notifications.telegram, text, lang)]
+      ['telegram', (s) => tg(s.notifications.telegram, text, lang, undefined, prefix)]
     ];
 
     return new Promise((resolve) => {

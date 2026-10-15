@@ -74,14 +74,18 @@ test('silence beyond the minimum: one alarm alert, one log entry; recovery close
   assert.ok(dur >= 10 && dur <= 20, String(dur));
 });
 
-test('silence shorter than the minimum produces nothing', () => {
+test('silence shorter than the minimum sends nothing and makes no alarm; it is kept as a micro-silence in the log', () => {
   const { m, store, sent, advance } = setup();
   m.start();
   advance(3000, -20);
   advance(6000, -80);
   advance(5000, -20);
   assert.equal(sent.length, 0);
-  assert.equal(store.listEvents().length, 0);
+  const evs = store.listEvents();
+  assert.equal(evs.filter((e) => e.kind === 'dead-air').length, 0);
+  assert.equal(evs.length, 1);
+  assert.equal(evs[0].kind, 'blip');
+  assert.equal(evs[0].cause, 'silence');
 });
 
 test('no level reports at all (engine stalled) is dead air with cause offline', () => {
@@ -229,7 +233,7 @@ test('alarm sound starts with the alarm and stops on recovery, on stop and never
 });
 
 test('two inputs: independent detectors, one log entry each, alerts carry the input name, one sound', () => {
-  const { m, store, sent, sounds, advance } = setup({ inputs: [INPUT_A, INPUT_B] });
+  const { m, store, sent, sounds, advance } = setup({ inputs: [INPUT_A, INPUT_B], notifications: { grouping: { enabled: false } } }); // grouping has its own tests
   assert.equal(m.start(), true);
   advance(4000, -20);
   assert.equal(m.status().overall, 'ok');

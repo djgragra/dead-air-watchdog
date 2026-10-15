@@ -46,16 +46,19 @@ const settings = (theme) => ({
     { id: 'in-b', type: 'stream', name: 'Web stream', deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: 'http://stream.example.org:8000/live', thresholdDb: -50, minSilenceSec: 20, enabled: true },
     { id: 'in-c', type: 'stream', name: 'Backup feed', deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: 'http://backup.example.org:8000/live', thresholdDb: -45, minSilenceSec: 15, enabled: true }
   ],
-  display: { edgeGlow: 'wall', startInWall: false, wallNameSize: 'auto' },
+  installationName: 'Control room',
+  display: { edgeGlow: 'wall', startInWall: false, wallNameSize: 'auto', wallLogo: 'large', wallLogoOpacity: 0.2, wallClock: 'max' },
   notifications: {
     desktop: true, reminderMin: 10, sound: { enabled: true, volume: 0.6 },
     email: { enabled: true, host: 'smtp.example.org', port: 587, secure: false, user: 'watchdog', pass: '', from: 'watchdog@example.org', recipients: ['engineer@example.org', 'duty.manager@example.org', 'oncall@example.org'] },
     telegram: { enabled: true, botToken: '', recipients: [{ chatId: '100200300', note: 'Engineer on duty' }, { chatId: '100200301', note: 'Station manager' }] },
-    updateAlert: true
+    updateAlert: true,
+    grouping: { enabled: true, windowSec: 60, firstNow: true }
   },
-  general: { startOnBoot: true, startMinimized: false, autoStartMonitoring: true, keepAwake: true, retentionDays: 365, checkUpdates: true, updateRepo: 'djgragra/dead-air-watchdog' },
+  general: { startOnBoot: true, startMinimized: false, autoStartMonitoring: true, keepAwake: true, retentionDays: 365, microRetentionDays: 30, checkUpdates: true, updateRepo: 'djgragra/dead-air-watchdog' },
   heartbeat: { enabled: true, url: 'https://ping.example.org/demo', intervalMin: 5 },
-  micExplained: true, closeHintShown: true
+  micExplained: true, closeHintShown: true,
+  updateState: { skipVersion: '', remindUntil: 0, lastCheck: { at: NOW - 3 * 3600_000, ok: true, error: '' } }, lastSeenVersion: '', window: { x: null, y: null, width: 1180, height: 780, maximized: false }
 });
 const mkStatus = (names) => ({
   running: true, overall: 'alarm', counts: { ok: 2, counting: 0, alarm: 1, starting: 0 }, startedAt: NOW - 3 * 3600_000 - 12 * MIN,
@@ -75,15 +78,44 @@ const events = [
   ev(4, 'gap', 'offline', 30 * 60, 3 * 60, '', ''),
   ev(5, 'dead-air', 'silence', 2 * 1440 + 300, 128, 'in-b', 'Web stream'),
   ev(6, 'dead-air', 'silence', 4 * 1440 + 90, 35, 'in-a', 'Studio A — on air'),
-  ev(7, 'dead-air', 'offline', 6 * 1440 + 600, 410, 'in-c', 'Backup feed')
-];
+  ev(7, 'dead-air', 'offline', 6 * 1440 + 600, 410, 'in-c', 'Backup feed'),
+  { ...ev(8, 'blip', 'silence', 12, 3, 'in-b', 'Web stream') },
+  { ...ev(9, 'blip', 'late', 47, 2, 'in-b', 'Web stream') },
+  { ...ev(10, 'blip', 'nodata', 95, 4, 'in-b', 'Web stream') },
+  { ...ev(11, 'blip', 'silence', 130, 1, 'in-a', 'Studio A — on air') },
+  { ...ev(12, 'pause', 'maintenance', 240, 3600, 'in-c', 'Backup feed'), until: NOW - 180 * MIN }
+].sort((a, b) => b.start - a.start);
 const daily = Array.from({ length: 7 }, (_, i) => {
   const d = new Date(NOW - (6 - i) * 86_400_000);
   const count = [0, 1, 0, 2, 0, 1, 2][i];
   return { date: d.toISOString().slice(0, 10), count, totalMs: count * 95_000, longestMs: count ? 120_000 : 0 };
 });
 
-const initScript = ({ settings, status, events, daily, APP_VERSION }) => {
+const initScript = ({ settings, status, events, daily, APP_VERSION, extra }) => {
+  Object.assign(window, extra || {});
+  if (window.__withLogos) {
+    // invented logos: a transparent PNG each (round badge with letters), the last one with its own white background
+    const make = (letters, colour, opaque) => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 256;
+      const g = c.getContext('2d');
+      if (opaque) {
+        g.fillStyle = '#ffffff';
+        g.fillRect(0, 0, 256, 256);
+      }
+      g.fillStyle = colour;
+      g.beginPath();
+      g.arc(128, 128, 118, 0, Math.PI * 2);
+      g.fill();
+      g.fillStyle = '#fff';
+      g.font = 'bold 96px sans-serif';
+      g.textAlign = 'center';
+      g.textBaseline = 'middle';
+      g.fillText(letters, 128, 136);
+      return c.toDataURL('image/png');
+    };
+    window.__logos = Object.fromEntries(settings.inputs.map((inp, i) => [inp.id, make(['SA', 'WS', 'BF'][i % 3], ['#2f4fa8', '#1d8a6a', '#a8552f'][i % 3], i === 2)]));
+  }
   const h = () => () => {};
   const resolved = (v) => () => Promise.resolve(v);
   window.__fire = {};
@@ -91,18 +123,23 @@ const initScript = ({ settings, status, events, daily, APP_VERSION }) => {
   window.api = {
     platform: 'win32',
     settings: { get: resolved(settings), update: (p) => Promise.resolve({ ...settings, ...p }) },
-    monitor: { start: resolved(status), stop: resolved(status), status: resolved(status), muteAlarm: resolved() },
+    monitor: { start: resolved(status), stop: resolved(status), status: resolved(status), muteAlarm: resolved(), pause: resolved({ ok: true }) },
     events: { list: resolved(events), export: resolved({ ok: false }), clear: resolved() },
     stats: { daily: resolved(daily) },
     wall: { set: resolved() },
     audio: { devices: resolved({ granted: true, devices: [] }), accessStatus: resolved('granted'), testSound: resolved() },
     notifications: { test: resolved({ ok: true }) },
     backup: { export: resolved({ ok: true, file: 'C:\\Users\\Demo\\Documents\\dead-air-watchdog-backup-2026-10-11.json' }), import: resolved({ ok: false, canceled: true }) },
-    logos: { all: resolved({}), set: resolved({ ok: true }), remove: resolved({ ok: true }) },
+    logos: { all: resolved(window.__logos || {}), set: resolved({ ok: true }), remove: resolved({ ok: true }) },
     heartbeat: { test: resolved({ ok: true }) },
-    updates: { check: resolved({ ok: true, available: false, current: '26.10.2', latest: '26.10.2' }), download: resolved({ ok: false }), reveal: resolved(), openPage: resolved() },
+    updates: {
+      check: resolved(window.__update || { info: { ok: true, available: false, current: APP_VERSION, latest: APP_VERSION }, banner: 'none', lastCheck: settings.updateState.lastCheck, downloaded: null }),
+      state: resolved(window.__update || { info: null, banner: 'none', lastCheck: settings.updateState.lastCheck, downloaded: null }),
+      download: resolved({ ok: true, file: 'x' }), cancel: resolved(true), remind: resolved(), skip: resolved(), install: resolved({ ok: true, kind: 'run-installer' }), reveal: resolved(), openPage: resolved(),
+      whatsNew: resolved(window.__whatsNew || null), whatsNewSeen: resolved(true)
+    },
     delivery: { get: resolved([]) },
-    app: { info: resolved({ version: APP_VERSION, platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC' }), openExternal: resolved() },
+    app: { info: resolved({ version: APP_VERSION, platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC', logsDir: '' }), openExternal: resolved(), supportInfo: resolved('Dead Air Watchdog'), openLogs: resolved() },
     on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), delivery: on('delivery'), wallExit: on('wallExit') }
   };
 };
@@ -121,11 +158,11 @@ const bigSetup = (n, theme) => {
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; // the version shown in the window
 const { chromium } = loadPlaywright();
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-async function shoot(file, theme, steps, st = status, cfg = null) {
+async function shoot(file, theme, steps, st = status, cfg = null, extra = {}) {
   const ctx = await browser.newContext({ viewport: { width: 1240, height: 800 }, deviceScaleFactor: 2, colorScheme: theme === 'light' ? 'light' : 'dark' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('page error:', e.message));
-  await page.addInitScript(initScript, { settings: cfg || settings(theme), status: st, events, daily, APP_VERSION });
+  await page.addInitScript(initScript, { settings: cfg || settings(theme), status: st, events, daily, APP_VERSION, extra });
   await page.goto(`${base}/renderer/index.html`);
   await page.waitForSelector('.nav__item');
   await page.waitForTimeout(400);
@@ -144,10 +181,12 @@ await shoot('01-dashboard.png', 'dark', async (page) => {
 await shoot('02-event-log.png', 'dark', async (page) => view(page, 'log'));
 await shoot('03-alerts.png', 'light', async (page) => {
   await view(page, 'settings');
+  await page.click('.tab[data-tab="alerts"]');
   await page.evaluate(() => document.getElementById('mTo').scrollIntoView({ block: 'center' }));
 });
 await shoot('04-backup.png', 'light', async (page) => {
   await view(page, 'settings');
+  await page.click('.tab[data-tab="backup"]');
   await page.check('#bkSecrets');
   await page.click('#bkExport');
   await page.locator('#bkCard').scrollIntoViewIfNeeded();
@@ -175,5 +214,41 @@ await shoot('08-invalid-field.png', 'light', async (page) => {
   await page.click('#saveBtn, button[type="submit"]');
   await page.waitForTimeout(300);
 }, status);
+// ---- 26.10.6: micro-silences, update banner, logos in the wall display, welcome ----
+await shoot('09-micro-silences.png', 'dark', async (page) => {
+  await view(page, 'log');
+  await page.click('[data-filter="blip"]');
+});
+const upd = (phase) => ({ info: { ok: true, available: true, current: APP_VERSION, latest: '26.10.7', notes: 'Micro-silences, pause of the alerts for one input, grouped alerts', installer: { name: 'x', size: 1 }, canDownload: true }, banner: 'show', lastCheck: settings('dark').updateState.lastCheck, downloaded: phase === 'ready' ? 'Dead-Air-Watchdog-Setup-26.10.7.exe' : null });
+await shoot('10-update-banner.png', 'dark', async () => {}, status, null, { __update: upd('idle') });
+await shoot('11-update-settings.png', 'light', async (page) => {
+  await view(page, 'settings');
+  await page.click('.tab[data-tab="updates"]');
+}, status, null, { __update: upd('ready') });
+await shoot('12-wall-large-logo.png', 'dark', async (page) => {
+  await page.click('#wallBtn');
+  await page.waitForTimeout(500);
+  await levels(page);
+}, status, null, { __withLogos: true });
+const fadedCfg = settings('dark');
+fadedCfg.display.wallLogo = 'faded';
+fadedCfg.display.wallClock = 'large';
+await shoot('13-wall-faded-logo.png', 'dark', async (page) => {
+  await page.click('#wallBtn');
+  await page.waitForTimeout(500);
+  await levels(page);
+}, status, fadedCfg, { __withLogos: true });
+const pausedStatus = JSON.parse(JSON.stringify(status));
+Object.assign(pausedStatus.inputs[2], { state: 'paused', pausedUntil: NOW + 50 * MIN, cause: null, elapsedMs: 0, silenceStart: null });
+Object.assign(pausedStatus, { overall: 'ok', counts: { ok: 2, counting: 0, alarm: 0, starting: 0 } });
+await shoot('14-paused-input.png', 'dark', async (page) => {
+  await levels(page);
+  await page.click('.tile:nth-child(2) .tile__pause');
+}, pausedStatus);
+await shoot('15-welcome.png', 'dark', async () => {}, { running: false, overall: 'idle', counts: {}, inputs: [], startedAt: null }, { ...settings('dark'), inputs: [] });
+await shoot('16-settings-general.png', 'light', async (page) => {
+  await view(page, 'settings');
+  await page.click('.tab[data-tab="general"]');
+});
 await browser.close();
 server.close();
