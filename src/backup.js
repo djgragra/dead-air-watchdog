@@ -1,3 +1,4 @@
+// garage-common: backup 1
 // Configuration backup: build the file, read it back, say what must be typed again.
 // Electron-free and file-free (the main process asks for the file and applies the plan), so it can
 // be tested. Settings here are the plain ones; sealed values (enc:v1:) never come out of a file.
