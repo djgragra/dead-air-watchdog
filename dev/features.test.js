@@ -229,6 +229,18 @@ test('pause: only the paused input is silent; the others keep alerting', () => {
   assert.equal(m.status().overall, 'alarm');
 });
 
+test('pause: an input that is removed or disabled while paused does not leave an open pause in the log', () => {
+  const { m, store, clock, advance } = setup({ inputs: [A, B] });
+  m.start();
+  advance(3000, -20);
+  m.pauseInput('b', clock.t + 3_600_000);
+  store.updateSettings({ inputs: [A] }); // B removed in Settings
+  m.syncInputs();
+  const pause = store.listEvents().find((e) => e.kind === 'pause');
+  assert.ok(pause.end, 'closed');
+  assert.equal(m.status().inputs.length, 1);
+});
+
 test('pause: wrong input, past time and not-a-number are refused', () => {
   const { m, clock } = setup();
   assert.equal(m.pauseInput('nope', clock.t + 1000).ok, false);

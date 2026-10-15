@@ -202,6 +202,8 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       addGap(lastTick, t, 'suspended');
     }
     lastTick = t;
+    // a pause that reached its end (also of an input that is no longer monitored) is closed in the log
+    for (const [id, p] of [...pauses]) if (p.until <= t || !inputById(id)) api.resumeInput(id, p.until <= t ? 'expired' : 'manual');
     for (const ch of chans.values()) {
       const inp = inputById(ch.id);
       if (inp) tickChannel(ch, inp, t);
@@ -323,6 +325,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
           chans.delete(id);
         }
       }
+      for (const id of [...pauses.keys()]) if (!inputById(id)) api.resumeInput(id, 'manual'); // the input was removed
       for (const inp of list) {
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));
