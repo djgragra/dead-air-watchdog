@@ -95,3 +95,19 @@ test('the logo and every icon file made from it exist (app icons for Windows, ma
   assert.equal(icns.subarray(0, 4).toString(), 'icns');
   assert.equal(icns.readUInt32BE(4), icns.length);
 });
+
+test('logo transparency: a logo with a transparent edge needs no box, one that fills its picture does', async () => {
+  const { hasTransparentEdge } = await import('../src/core/logo-alpha.js');
+  const make = (w, h, alphaAt) => {
+    const px = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px[(y * w + x) * 4 + 3] = alphaAt(x, y);
+    return px;
+  };
+  const circle = (x, y) => (Math.hypot(x - 31.5, y - 31.5) < 30 ? 255 : 0); // round logo on nothing
+  assert.equal(hasTransparentEdge(make(64, 64, circle), 64, 64), true);
+  assert.equal(hasTransparentEdge(make(64, 64, () => 255), 64, 64), false, 'a full-bleed picture');
+  assert.equal(hasTransparentEdge(make(64, 64, () => 0), 64, 64), true, 'nothing drawn at all');
+  const border = (x, y) => (x < 2 || y < 2 || x > 61 || y > 61 ? 255 : 0); // opaque frame
+  assert.equal(hasTransparentEdge(make(64, 64, border), 64, 64), false);
+  assert.equal(hasTransparentEdge(new Uint8ClampedArray(4), 64, 64), false, 'bad input');
+});

@@ -6,6 +6,7 @@ import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
 import { wallGrid } from '../src/core/wall-grid.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
+import { hasTransparentEdge } from '../src/core/logo-alpha.js';
 
 const api = window.api;
 const $ = (id) => document.getElementById(id);
@@ -31,7 +32,8 @@ let dirty = false;
 let devices = [];
 let devicesDenied = false;
 let startError = null;
-let updateState = null;
+let upd = { view: null, phase: 'idle', pct: 0, got: 0, total: 0, error: '', after: '' }; // guided update: view from the main process + what the window is doing
+let activeTab = 'inputs';
 let wall = false;
 let cursorTimer = null;
 let logos = {}; // input id -> PNG data URL
@@ -50,6 +52,64 @@ function tel(tag, cls, key) {
   return e;
 }
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+// A logo with a transparent edge gets no box behind it; one that fills its picture keeps a light box (data-alpha="no").
+const alphaCache = new Map(); // data URL -> true (transparent edge) | false
+function markAlpha(img, src) {
+  if (!img) return;
+  if (!src) {
+    img.removeAttribute('data-alpha');
+    return;
+  }
+  if (alphaCache.has(src)) {
+    img.dataset.alpha = alphaCache.get(src) ? 'yes' : 'no';
+    return;
+  }
+  const probe = new Image();
+  probe.onload = () => {
+    let transparent = false;
+    try {
+      const c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const ctx = c.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(probe, 0, 0, 64, 64);
+      transparent = hasTransparentEdge(ctx.getImageData(0, 0, 64, 64).data, 64, 64);
+    } catch {
+      /* unreadable: keeps the box */
+    }
+    alphaCache.set(src, transparent);
+    if (img.getAttribute('src') === src) img.dataset.alpha = transparent ? 'yes' : 'no';
+  };
+  probe.src = src;
+}
+
+// A password (or an address that carries one) with an eye button; it opens hidden every time.
+function addEye(input, { url = false } = {}) {
+  if (input.parentElement?.classList.contains('pw')) return input.parentElement.querySelector('.pw__eye');
+  const wrap = el('span', 'pw');
+  input.replaceWith(wrap);
+  const btn = el('button', 'pw__eye');
+  btn.type = 'button';
+  btn.append(el('span', 'ico ico--eye'));
+  wrap.append(input, btn);
+  const hide = (on) => {
+    if (url) input.classList.toggle('is-masked', on);
+    else input.type = on ? 'password' : 'text';
+    btn.firstChild.className = `ico ${on ? 'ico--eye' : 'ico--eyeoff'}`;
+    const label = t(on ? (url ? 'pw.showUrl' : 'pw.show') : url ? 'pw.hideUrl' : 'pw.hide');
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.setAttribute('aria-pressed', on ? 'false' : 'true');
+  };
+  btn.addEventListener('click', () => {
+    const masked = url ? input.classList.contains('is-masked') : input.type === 'password';
+    hide(!masked);
+  });
+  btn._reset = () => hide(true);
+  btn._reset();
+  return btn;
+}
+const resetEyes = () => document.querySelectorAll('.pw__eye').forEach((b) => b._reset?.());
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : `i${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`);
 const hostOf = (u) => {
   try {
@@ -65,6 +125,7 @@ function applyI18n() {
   for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
   $('aboutText').textContent = t('help.pAbout', { v: info.version });
   document.title = t('app.title');
+  for (const b of document.querySelectorAll('.pw__eye')) b._reset?.();
 }
 
 const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -79,8 +140,10 @@ function tickClock() {
   const now = new Date();
   const time = now.toLocaleTimeString(localeFor(lang), { hour12: false });
   const date = now.toLocaleDateString(localeFor(lang), { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  const longDate = now.toLocaleDateString(localeFor(lang), { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   $('clockTime').textContent = $('wallClock').textContent = time;
-  $('clockDate').textContent = $('wallDate').textContent = date;
+  $('clockDate').textContent = date;
+  $('wallDate').textContent = longDate;
   $('uptime').textContent = status.running && status.startedAt ? formatDuration(Date.now() - status.startedAt) : '—';
 }
 
@@ -100,12 +163,15 @@ function renderStatus() {
   $('hero').dataset.state = overall;
   const word = overall === 'ok' ? t('overall.ok') : t(`st.${overall}`);
   $('heroState').textContent = word;
+  $('statePill').dataset.state = overall;
+  $('pillText').textContent = word;
   let sub = '';
   if (overall === 'idle') sub = t('st.sub.idle');
   else if (overall === 'starting') sub = t('st.sub.starting');
   else if (overall === 'ok') sub = t('overall.sub.ok', { n: status.counts.ok || 0 });
   else if (overall === 'counting') sub = t('overall.sub.counting', { names: namesOf('counting') });
   else if (overall === 'alarm') sub = t('overall.sub.alarm', { names: namesOf('alarm') });
+  else if (overall === 'paused') sub = t('overall.sub.paused');
   $('heroSub').textContent = sub;
   $('wallState').textContent = overall === 'alarm' ? `${word} · ${namesOf('alarm')}` : overall === 'counting' ? `${word} · ${namesOf('counting')}` : word;
 
@@ -134,6 +200,13 @@ function renderStatus() {
 
 // Wall display: long names. 'auto' shrinks each name (at most to half) until it fits in two lines;
 // the other sizes are fixed (see style.css). Runs on every status change and on resize.
+function applyDisplay() {
+  const d = settings?.display || {};
+  document.body.dataset.walllogo = d.wallLogo || 'large';
+  document.body.dataset.wallclock = d.wallClock || 'max';
+  document.body.style.setProperty('--logo-op', String(d.wallLogoOpacity ?? 0.2));
+}
+
 function fitWallNames() {
   const mode = settings?.display.wallNameSize || 'auto';
   document.body.dataset.wallname = mode;
@@ -173,11 +246,22 @@ function tileFor(input) {
   const type = el('span', 'tile__type');
   const logo = el('img', 'tile__logo hidden');
   logo.alt = '';
-  head.append(el('span', 'tile__dot'), logo, name, type);
+  const art = el('div', 'tile__art'); // the big logo of the wall display ("Large")
+  const artImg = el('img');
+  artImg.alt = '';
+  art.appendChild(artImg);
+  const pause = el('button', 'tile__pause');
+  pause.type = 'button';
+  pause.append(el('span', 'ico ico--pause'));
+  head.append(el('span', 'tile__dot'), logo, name, type, pause);
   const state = el('div', 'tile__state');
   const sub = el('div', 'tile__sub');
   const fault = el('div', 'tile__fault');
-  root.append(head, state, sub, fault);
+  const blips = el('button', 'tile__blips hidden');
+  blips.type = 'button';
+  const body = el('div', 'tile__body');
+  body.append(head, state, sub, fault, blips);
+  root.append(art, body);
   const rows = [0, 1].map(() => {
     const row = el('div', 'meter__row');
     const ch = el('span', 'meter__ch');
@@ -188,10 +272,12 @@ function tileFor(input) {
     track.append(fill, peak, thr);
     const num = el('span', 'meter__num', '—');
     row.append(ch, track, num);
-    root.appendChild(row);
+    body.appendChild(row);
     return { ch, fill, peak, thr, num, hold: { db: -120, at: 0 } };
   });
-  tile = { root, logo, name, type, state, sub, fault, rows };
+  pause.addEventListener('click', (e) => openPauseMenu(root.dataset.id, pause, e));
+  blips.addEventListener('click', () => showMicroLog(root.dataset.id));
+  tile = { root, logo, artImg, art, pause, blips, name, type, state, sub, fault, rows };
   tiles.set(input.id, tile);
   return tile;
 }
@@ -220,19 +306,32 @@ function renderTiles() {
     const tile = tileFor(inp);
     if (box.children[idx] !== tile.root) box.insertBefore(tile.root, box.children[idx] || null);
     tile.root.dataset.state = inp.state;
+    tile.root.dataset.id = inp.id;
     tile.name.textContent = inp.name;
     tile.name.title = inp.name; // the full name, when a long one is cut
     const logoSrc = logos[inp.id] || '';
     if (tile.logoSrc !== logoSrc) {
       tile.logoSrc = logoSrc;
-      if (logoSrc) tile.logo.src = logoSrc;
-      else tile.logo.removeAttribute('src');
+      for (const img of [tile.logo, tile.artImg]) {
+        if (logoSrc) img.src = logoSrc;
+        else img.removeAttribute('src');
+        markAlpha(img, logoSrc);
+      }
       tile.logo.classList.toggle('hidden', !logoSrc);
+      tile.root.classList.toggle('has-logo', !!logoSrc);
+      if (logoSrc) tile.root.style.setProperty('--tile-logo', `url("${logoSrc}")`);
+      else tile.root.style.removeProperty('--tile-logo');
     }
     tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream');
     tile.state.textContent = t(`st.${inp.state}`);
+    const paused = inp.state === 'paused';
+    tile.pause.title = t('pause.btn');
+    tile.pause.setAttribute('aria-label', t('pause.btn'));
+    tile.pause.classList.toggle('hidden', !status.running || !['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state));
+    renderTileBlips(tile, inp.id);
     let sub = '';
-    if (inp.state === 'counting') sub = t('st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
+    if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
+    else if (inp.state === 'counting') sub = t('st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
     else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
     else if (inp.state === 'ok') sub = t('meter.threshold', { db: inp.thresholdDb });
     tile.sub.textContent = sub;
@@ -241,10 +340,74 @@ function renderTiles() {
     tile.rows[0].ch.textContent = pair ? String(pair * 2 + 1) : t('meter.ch1');
     tile.rows[1].ch.textContent = pair ? String(pair * 2 + 2) : t('meter.ch2');
     for (const r of tile.rows) r.thr.style.left = `${pctOf(inp.thresholdDb)}%`;
-    if (!['ok', 'counting', 'alarm', 'starting'].includes(inp.state)) resetTileMeter(tile);
+    if (!['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state)) resetTileMeter(tile);
   });
   fitWallGrid();
   fitWallNames();
+}
+
+// ---- micro-silences and pauses on the tiles ------------------------------------------------------------------
+const startOfToday = () => new Date().setHours(0, 0, 0, 0);
+function blipsOf(inputId) {
+  const from = startOfToday();
+  return events.filter((e) => e.kind === 'blip' && e.start >= from && (!inputId || e.inputId === inputId));
+}
+
+function renderTileBlips(tile, inputId) {
+  const list = blipsOf(inputId);
+  const b = tile.blips;
+  b.classList.toggle('hidden', !list.length);
+  if (!list.length) return;
+  const last = list[0]; // events come newest first
+  b.textContent = t('tile.blipsLast', { n: list.length, time: new Date(last.start).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }), cause: t(`cause.${last.cause}`) });
+}
+
+function showMicroLog(inputId) {
+  logFilter = 'blip';
+  logInput = inputId || '';
+  for (const x of document.querySelectorAll('[data-filter]')) x.classList.toggle('is-active', x.dataset.filter === 'blip');
+  showView('log');
+  $('logInput').value = logInput;
+}
+
+// the small menu of the pause button (maintenance): 1 hour, until tomorrow 06:00, or resume
+let openMenu = null;
+function closePauseMenu() {
+  openMenu?.remove();
+  openMenu = null;
+}
+function openPauseMenu(inputId, anchor, ev) {
+  ev?.stopPropagation();
+  const had = openMenu && openMenu._for === anchor;
+  closePauseMenu();
+  if (had) return;
+  const inp = status.inputs.find((i) => i.id === inputId);
+  if (!inp) return;
+  const menu = el('div', 'menu');
+  menu.setAttribute('role', 'menu');
+  menu._for = anchor;
+  menu.appendChild(el('div', 'menu__title', t('pause.menuTitle')));
+  const item = (icon, key, mode) => {
+    const b = el('button');
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    b.append(el('span', `ico ico--${icon}`), el('span', '', t(key)));
+    b.addEventListener('click', async () => {
+      closePauseMenu();
+      await api.monitor.pause(inputId, mode);
+    });
+    menu.appendChild(b);
+  };
+  if (inp.state === 'paused') item('play', 'pause.off', 'off');
+  else {
+    item('pause', 'pause.1h', '1h');
+    item('pause', 'pause.tomorrow', 'tomorrow');
+  }
+  document.body.appendChild(menu);
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${Math.min(window.innerHeight - menu.offsetHeight - 8, r.bottom + 6)}px`;
+  menu.style.left = `${Math.max(8, Math.min(window.innerWidth - menu.offsetWidth - 8, r.right - menu.offsetWidth))}px`;
+  openMenu = menu;
 }
 
 function onLevels(batch) {
@@ -354,6 +517,7 @@ function renderKpis() {
   $('kpiPeriodSub').textContent = count ? evText(count) : '';
   $('kpiLongest').textContent = longest ? formatDuration(longest) : t('kpi.none');
   $('kpiLongestSub').textContent = '';
+  $('kpiMicro').textContent = String(blipsOf('').length);
 }
 
 async function refreshStats() {
@@ -374,8 +538,22 @@ function fillInputSelect(sel, current) {
 }
 
 // ---- events (recent list and log) ---------------------------------------------------------------
+const shortDuration = (ms) => (ms < 10_000 ? `${(Math.max(0, ms) / 1000).toFixed(1)}s` : formatDuration(ms));
+
 function typeBadge(e) {
+  if (e.kind === 'blip') return el('span', 'badge badge--blip', t('kind.blip'));
+  if (e.kind === 'pause') return el('span', 'badge badge--pause', t('kind.pause'));
   return el('span', `badge ${e.kind === 'gap' ? 'badge--gap' : 'badge--dead'}`, t(`cause.${e.cause}`));
+}
+
+const LOG_LIMIT = 1000;
+
+function noteOf(e) {
+  const clock = (ts) => new Date(ts).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (e.kind === 'gap') return t('log.gapNote');
+  if (e.kind === 'blip') return [t(`cause.${e.cause}`), t('log.blipNote')].join(' · ');
+  if (e.kind === 'pause') return e.end ? (e.expired ? t('log.pauseExpired') : t('log.pauseNote', { until: clock(e.end) })) : t('log.pauseNote', { until: clock(e.until) });
+  return [e.interrupted ? t('log.interrupted') : '', e.pausedBy ? t('log.pausedBy') : ''].filter(Boolean).join(' · ');
 }
 
 function renderRecent() {
@@ -405,11 +583,12 @@ function renderRecent() {
 function renderLog() {
   const box = $('logTable');
   box.replaceChildren();
-  const rows = events.filter((e) => (logFilter === 'all' || e.kind === logFilter) && (!logInput || e.inputId === logInput));
-  if (!rows.length) {
+  const all = events.filter((e) => (logFilter === 'all' || e.kind === logFilter) && (!logInput || e.inputId === logInput || (e.kind === 'gap' && !logInput)));
+  if (!all.length) {
     box.appendChild(el('p', 'empty-msg', t('log.none')));
     return;
   }
+  const rows = all.slice(0, LOG_LIMIT);
   const table = el('table');
   const head = el('tr');
   for (const k of ['start', 'end', 'dur', 'type', 'input', 'note']) head.appendChild(el('th', '', t(`log.col.${k}`)));
@@ -418,25 +597,28 @@ function renderLog() {
   table.appendChild(thead);
   const body = el('tbody');
   for (const e of rows) {
-    const tr = el('tr', e.kind === 'gap' ? 'is-gap' : '');
+    const tr = el('tr', e.kind === 'gap' ? 'is-gap' : e.kind === 'blip' ? 'is-blip' : '');
     tr.appendChild(el('td', '', formatDateTime(e.start, lang)));
     tr.appendChild(el('td', '', e.end ? formatDateTime(e.end, lang) : t('log.ongoing')));
-    tr.appendChild(el('td', 'mono', e.end ? formatDuration(e.end - e.start) : formatDuration(Date.now() - e.start) + ' …'));
+    tr.appendChild(el('td', 'mono', e.end ? shortDuration(e.end - e.start) : formatDuration(Date.now() - e.start) + ' …'));
     const c = el('td');
     c.appendChild(typeBadge(e));
     tr.appendChild(c);
     tr.appendChild(el('td', '', e.input || ''));
-    tr.appendChild(el('td', '', [e.kind === 'gap' ? t('log.gapNote') : '', e.interrupted ? t('log.interrupted') : ''].filter(Boolean).join(' · ')));
+    tr.appendChild(el('td', '', noteOf(e)));
     body.appendChild(tr);
   }
   table.appendChild(body);
   box.appendChild(table);
+  if (all.length > rows.length) box.appendChild(el('p', 'hint', t('log.limited', { n: LOG_LIMIT })));
 }
 
 async function refreshEvents() {
   events = await api.events.list();
   renderRecent();
   renderLog();
+  renderKpis();
+  renderTiles(); // the micro-silence counters
 }
 
 async function doExport(format) {
@@ -506,6 +688,8 @@ function refreshCardLogo(card) {
     if (data) i.src = data;
     else i.removeAttribute('src');
   }
+  markAlpha(img, data);
+  markAlpha(small, data);
   img.classList.toggle('hidden', !data);
   small.classList.toggle('hidden', !data);
   card.querySelector('.in-logo-remove').disabled = !data;
@@ -597,7 +781,9 @@ function buildInputCard(inp, open) {
     url.value = inp.streamUrl;
     url.spellcheck = false;
     url.placeholder = 'https://stream.example.org/live.mp3';
-    body.append(labelled('set.url.label', url), tel('p', 'hint', 'set.url.hint'), tel('p', 'warn hidden in-bad', 'set.url.bad'));
+    const urlLabel = labelled('set.url.label', url);
+    body.append(urlLabel, tel('p', 'hint', 'set.url.hint'), tel('p', 'warn hidden in-bad', 'set.url.bad'));
+    card._urlLabel = urlLabel;
   } else {
     const sel = el('select', 'in-device');
     fillDeviceSelect(sel, inp.deviceId, inp.deviceLabel);
@@ -652,7 +838,19 @@ function buildInputCard(inp, open) {
   card.append(summary, body);
   title.textContent = inputTitle(card);
   refreshCardLogo(card);
+  if (card._urlLabel) syncUrlEye(card);
   return card;
+}
+
+// An address that carries "user:password@" starts masked and has an eye; one without credentials stays plain.
+function syncUrlEye(card) {
+  const url = card.querySelector('.in-url');
+  const has = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(url.value);
+  const first = !url.parentElement.classList.contains('pw');
+  if (has && first) {
+    addEye(url, { url: true });
+    url.classList.add('is-masked');
+  }
 }
 
 function updateInputsFooter() {
@@ -765,6 +963,16 @@ function onInputsClick(e) {
   }
 }
 
+function showTab(name) {
+  activeTab = name;
+  for (const b of document.querySelectorAll('.tab')) {
+    const on = b.dataset.tab === name;
+    b.classList.toggle('is-active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+  for (const p of document.querySelectorAll('.tabpane')) p.classList.toggle('is-active', p.dataset.pane === name);
+}
+
 // ---- settings form: the rest -------------------------------------------------------------------------
 function renderRecipients(list) {
   const box = $('tRecipients');
@@ -828,11 +1036,24 @@ function fillForm() {
   $('gAwake').checked = s.general.keepAwake;
   $('gUpd').checked = s.general.checkUpdates;
   $('gRet').value = s.general.retentionDays;
+  $('gMicro').value = s.general.microRetentionDays;
+  $('gInst').value = s.installationName;
+  $('gInst').placeholder = info.host || '';
+  $('grEnable').checked = s.notifications.grouping.enabled;
+  $('grWindow').value = s.notifications.grouping.windowSec;
+  $('grFirst').checked = s.notifications.grouping.firstNow;
   $('dGlow').value = s.display.edgeGlow;
   $('dWall').checked = s.display.startInWall;
   $('dName').value = s.display.wallNameSize;
+  $('dLogo').value = s.display.wallLogo;
+  $('dLogoOp').value = Math.round(s.display.wallLogoOpacity * 100);
+  $('dClock').value = s.display.wallClock;
+  syncDisplayFields();
+  resetEyes();
   setDirty(false);
 }
+
+const syncDisplayFields = () => $('dLogoOpField').classList.toggle('hidden', $('dLogo').value !== 'faded');
 
 function readForm() {
   const recipients = [...$('tRecipients').querySelectorAll('.rec')].map((row) => {
@@ -847,11 +1068,13 @@ function readForm() {
       sound: { enabled: $('nSound').checked, volume: (Number($('nVol').value) || 60) / 100 },
       email: { enabled: $('mEnable').checked, host: $('mHost').value.trim(), port: Number($('mPort').value) || 587, secure: $('mSecure').checked, user: $('mUser').value.trim(), pass: $('mPass').value, from: $('mFrom').value.trim(), recipients: parseAddresses($('mTo').value).valid },
       telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients },
-      updateAlert: $('uAlert').checked
+      updateAlert: $('uAlert').checked,
+      grouping: { enabled: $('grEnable').checked, windowSec: Number($('grWindow').value) || 60, firstNow: $('grFirst').checked }
     },
+    installationName: $('gInst').value.trim(),
     heartbeat: { enabled: $('hEnable').checked, url: $('hUrl').value.trim(), intervalMin: Number($('hMin').value) || 5 },
-    display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked, wallNameSize: $('dName').value },
-    general: { startOnBoot: $('gBoot').checked, startMinimized: $('gMin').checked, autoStartMonitoring: $('gAuto').checked, keepAwake: $('gAwake').checked, checkUpdates: $('gUpd').checked, retentionDays: Number($('gRet').value) || 365 }
+    display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked, wallNameSize: $('dName').value, wallLogo: $('dLogo').value, wallLogoOpacity: (Number($('dLogoOp').value) || 20) / 100, wallClock: $('dClock').value },
+    general: { startOnBoot: $('gBoot').checked, startMinimized: $('gMin').checked, autoStartMonitoring: $('gAuto').checked, keepAwake: $('gAwake').checked, checkUpdates: $('gUpd').checked, retentionDays: Number($('gRet').value) || 365, microRetentionDays: Number($('gMicro').value) || 30 }
   };
 }
 
@@ -917,6 +1140,7 @@ async function saveForm(e) {
   settings = await api.settings.update(patch);
   fillForm();
   startError = null;
+  applyDisplay();
   renderAll();
   $('saveState').textContent = t('set.saved');
   setTimeout(() => {
@@ -1047,38 +1271,222 @@ async function importBackup() {
   renderMissing(r.missing);
 }
 
-// ---- updates ------------------------------------------------------------------------------------------
-function renderUpdates() {
-  $('updCurrent').textContent = t('upd.current', { v: info.version });
-  const res = $('updRes');
-  const actions = $('updActions');
-  res.className = 'testres';
-  actions.classList.add('hidden');
-  $('updReveal').classList.add('hidden');
-  const u = updateState;
-  if (!u) {
-    res.textContent = '';
-    return;
-  }
-  if (u.busy) res.textContent = u.busy;
-  else if (!u.ok) {
-    res.textContent = t('upd.fail', { error: u.error });
-    res.classList.add('is-fail');
-  } else if (!u.available) res.textContent = t('upd.none');
-  else {
-    res.textContent = u.message || t('upd.available', { v: u.latest });
-    actions.classList.remove('hidden');
-    $('updDownload').classList.toggle('hidden', !u.installer || !u.sumsUrl);
-    if (!u.installer || !u.sumsUrl) res.textContent = `${t('upd.available', { v: u.latest })} ${t('upd.nomatch')}`;
-    if (u.file) $('updReveal').classList.remove('hidden');
+// ---- guided update: banner + Settings → Updates (apps/COMMON-FEATURES.md, section 4) ---------------------------------
+const mb = (n) => (n / 1048576).toFixed(1);
+
+function btn(key, cls, onClick, icon) {
+  const b = el('button', `btn btn--small ${cls || ''}`.trim());
+  b.type = 'button';
+  if (icon) b.append(el('span', `ico ico--${icon}`));
+  b.append(el('span', '', t(key)));
+  b.addEventListener('click', onClick);
+  return b;
+}
+
+// what the window is doing now: idle | downloading | ready | error | installing (the main process knows the rest)
+function updPhase() {
+  const v = upd.view;
+  if (upd.phase === 'idle' && v?.downloaded && v.info?.available) return 'ready';
+  return upd.phase;
+}
+
+function updateButtons(into, phase, v) {
+  into.replaceChildren();
+  const notes = btn('upd.notes', 'btn--ghost', () => api.updates.openPage());
+  if (phase === 'downloading') into.append(btn('upd.cancel', '', () => api.updates.cancel()));
+  else if (phase === 'ready') into.append(btn('upd.install', 'btn--primary', () => installNow(false)), notes);
+  else if (phase === 'error') into.append(btn('upd.tryAgain', 'btn--primary', startDownload), notes);
+  else if (phase === 'installing') return;
+  else if (v?.info?.available) {
+    if (v.info.canDownload) into.append(btn('upd.dlInstall', 'btn--primary', startDownload, 'download'));
+    into.append(btn('upd.later', '', remindLater), btn('upd.skip', '', skipVersion), notes);
   }
 }
 
-function showUpdateBanner(u) {
-  updateState = u;
-  $('updateText').textContent = t('upd.banner', { v: u.latest });
-  $('updateBanner').classList.remove('hidden');
-  renderUpdates();
+function renderUpdateUi() {
+  const v = upd.view;
+  const u = v?.info;
+  const phase = updPhase();
+  const available = !!(u?.ok && u.available);
+  const visible = phase !== 'idle' ? true : available && (v.banner === 'show' || upd.forceShow);
+  const bar = $('updateBanner');
+  bar.classList.toggle('hidden', !visible);
+  if (visible) {
+    let title = '';
+    if (phase === 'ready') title = t('upd.ready', { v: u.latest });
+    else if (phase === 'error') title = t('upd.error', { error: upd.error });
+    else if (phase === 'installing') title = t(`upd.after.${upd.after}`);
+    else title = t('upd.availFull', { v: u.latest, cur: u.current });
+    $('updTitle').textContent = title;
+    $('updNotes').textContent = phase === 'idle' ? [u.notes, u.installer ? '' : t('upd.nomatch')].filter(Boolean).join('\n') : '';
+    const prog = $('updProgress');
+    prog.classList.toggle('hidden', phase !== 'downloading');
+    if (phase === 'downloading') paintProgress();
+    updateButtons($('updBtns'), phase, v);
+  }
+  // Settings → Updates
+  $('updCurrent').textContent = t('upd.current', { v: info.version });
+  const lc = v?.lastCheck;
+  $('updLast').textContent = lc ? t('upd.lastCheck', { when: formatDateTime(lc.at, lang), result: lc.ok ? t('upd.resultOk') : t('upd.resultFail', { error: lc.error }) }) : t('upd.never');
+  const res = $('updRes');
+  res.className = 'testres';
+  if (upd.checking) res.textContent = t('upd.checking');
+  else if (upd.message) res.textContent = upd.message;
+  else if (u && !u.ok) {
+    res.textContent = t('upd.fail', { error: u.error });
+    res.classList.add('is-fail');
+  } else if (available && !visible) {
+    res.textContent = t(v.banner === 'skipped' ? 'upd.hidden.skipped' : 'upd.hidden.snoozed', { v: u.latest });
+    res.classList.add('is-warn');
+  } else if (available) res.textContent = t('upd.availFull', { v: u.latest, cur: u.current });
+  else if (u?.ok) res.textContent = t('upd.none');
+  else res.textContent = '';
+  const cardBtns = $('updCardBtns');
+  updateButtons(cardBtns, phase === 'idle' && available && !visible ? 'idle' : phase === 'idle' ? 'none' : phase, v);
+  if (phase === 'idle' && available && !visible) cardBtns.prepend(btn('upd.show', '', () => { upd.forceShow = true; renderUpdateUi(); }));
+  $('updCheck').disabled = !!upd.checking || phase === 'downloading';
+}
+
+function paintProgress() {
+  const { got, total } = upd;
+  const pct = total ? Math.min(100, Math.round((got / total) * 100)) : 0;
+  $('updFill').style.width = `${total ? pct : 8}%`;
+  $('updPct').textContent = total ? t('upd.progress', { pct, got: mb(got), total: mb(total) }) : t('upd.progressNoTotal', { got: mb(got) });
+}
+
+async function checkUpdates() {
+  upd.checking = true;
+  upd.message = '';
+  renderUpdateUi();
+  try {
+    upd.view = await api.updates.check();
+    upd.forceShow = !!upd.view.info?.available;
+  } finally {
+    upd.checking = false;
+  }
+  renderUpdateUi();
+  return upd.view;
+}
+
+async function startDownload() {
+  upd.phase = 'downloading';
+  upd.got = upd.total = 0;
+  upd.message = '';
+  renderUpdateUi();
+  const r = await api.updates.download();
+  upd.view = await api.updates.state();
+  if (r.ok) upd.phase = 'ready';
+  else if (r.error === 'cancelled') {
+    upd.phase = 'idle';
+    upd.message = t('upd.cancelled');
+  } else {
+    upd.phase = 'error';
+    upd.error = r.error;
+  }
+  renderUpdateUi();
+}
+
+async function installNow(confirmed) {
+  const r = await api.updates.install(confirmed);
+  if (!r.ok && r.error === 'confirm') {
+    if (await askInstall()) installNow(true);
+    return;
+  }
+  if (!r.ok) {
+    upd.phase = 'error';
+    upd.error = r.error;
+  } else {
+    upd.phase = 'installing';
+    upd.after = r.kind;
+  }
+  renderUpdateUi();
+}
+
+function askInstall() {
+  return new Promise((resolve) => {
+    const dlg = $('updDlg');
+    const done = (v) => {
+      dlg.close();
+      $('updDlgYes').removeEventListener('click', yes);
+      $('updDlgNo').removeEventListener('click', no);
+      dlg.removeEventListener('cancel', no);
+      resolve(v);
+    };
+    const yes = () => done(true);
+    const no = () => done(false);
+    $('updDlgYes').addEventListener('click', yes);
+    $('updDlgNo').addEventListener('click', no);
+    dlg.addEventListener('cancel', no);
+    dlg.showModal();
+  });
+}
+
+async function remindLater() {
+  upd.view = await api.updates.remind();
+  upd.forceShow = false;
+  renderUpdateUi();
+}
+
+async function skipVersion() {
+  upd.view = await api.updates.skip();
+  upd.forceShow = false;
+  renderUpdateUi();
+}
+
+// "What's new" after an update: the bullets of this version from the bundled CHANGELOG, shown once
+function inline(text) {
+  const out = document.createDocumentFragment();
+  for (const part of String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+    if (!part) continue;
+    if (part.startsWith('**')) out.append(el('strong', '', part.slice(2, -2)));
+    else if (part.startsWith('`')) out.append(el('code', '', part.slice(1, -1)));
+    else out.append(part);
+  }
+  return out;
+}
+
+async function showWhatsNew() {
+  const nw = await api.updates.whatsNew();
+  if (!nw) return;
+  $('newDlgTitle').textContent = t('whatsnew.title', { v: nw.version });
+  const list = $('newDlgList');
+  list.replaceChildren();
+  if (!nw.bullets.length) list.appendChild(el('li', '', t('whatsnew.none')));
+  for (const b of nw.bullets) {
+    const li = el('li');
+    li.appendChild(inline(b));
+    list.appendChild(li);
+  }
+  $('newDlgClose').onclick = async () => {
+    $('newDlg').close();
+    await api.updates.whatsNewSeen();
+  };
+  $('newDlg').addEventListener('cancel', () => api.updates.whatsNewSeen(), { once: true });
+  $('newDlg').showModal();
+}
+
+// Help & about: support
+async function copySupport() {
+  const out = $('helpRes');
+  out.className = 'testres';
+  try {
+    const text = await api.app.supportInfo();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+    out.textContent = t('help.copied');
+    out.classList.add('is-ok');
+  } catch (err) {
+    out.textContent = String(err.message || err);
+    out.classList.add('is-fail');
+  }
 }
 
 // ---- navigation and wiring -----------------------------------------------------------------------------
@@ -1087,7 +1495,12 @@ function showView(name) {
   for (const b of document.querySelectorAll('.nav__item')) b.classList.toggle('is-active', b.dataset.view === name);
   if (name === 'dashboard') refreshStats();
   if (name === 'log') refreshEvents();
-  if (name === 'settings' && !dirty) fillForm();
+  if (name === 'settings') {
+    if (!dirty) fillForm();
+    showTab(activeTab);
+    resetEyes();
+  }
+  closePauseMenu();
   document.querySelector('.main').scrollTo(0, 0);
 }
 
@@ -1102,9 +1515,11 @@ function renderAll() {
   renderKpis();
   renderRecent();
   renderLog();
-  renderUpdates();
+  renderUpdateUi();
   updateInputsFooter();
+  applyDisplay();
   if (!dirty) fillForm();
+  showTab(activeTab);
 }
 
 function buildLangSelect() {
@@ -1142,15 +1557,20 @@ function wire() {
   $('wallBtn').addEventListener('click', () => setWall(true));
   $('wallExit').addEventListener('click', () => setWall(false));
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && wall) setWall(false);
+    if (e.key === 'Escape' && openMenu) closePauseMenu();
+    else if (e.key === 'Escape' && wall) setWall(false);
   });
   document.addEventListener('mousemove', wakeCursor);
   $('setupBtn').addEventListener('click', () => showView('settings'));
   $('allLogBtn').addEventListener('click', () => showView('log'));
-  $('updateGo').addEventListener('click', () => {
-    showView('settings');
-    $('updCard').scrollIntoView();
+  for (const b of document.querySelectorAll('.tab')) b.addEventListener('click', () => showTab(b.dataset.tab));
+  document.addEventListener('click', (e) => {
+    if (openMenu && !openMenu.contains(e.target)) closePauseMenu();
   });
+  window.addEventListener('blur', closePauseMenu);
+  addEye($('mPass'));
+  addEye($('tToken'));
+  $('dLogo').addEventListener('change', syncDisplayFields);
   for (const b of document.querySelectorAll('[data-days]')) {
     b.addEventListener('click', () => {
       chartDays = Number(b.dataset.days);
@@ -1247,23 +1667,18 @@ function wire() {
   $('mTest').addEventListener('click', () => testChannel('email'));
   $('tTest').addEventListener('click', () => testChannel('telegram'));
 
-  $('updCheck').addEventListener('click', async () => {
-    updateState = { busy: t('upd.checking') };
-    renderUpdates();
-    const r = await api.updates.check();
-    updateState = r;
-    renderUpdates();
+  $('updCheck').addEventListener('click', checkUpdates);
+  $('helpCopy').addEventListener('click', copySupport);
+  $('helpLogs').addEventListener('click', () => api.app.openLogs());
+  $('helpCheck').addEventListener('click', async () => {
+    const out = $('helpRes');
+    out.className = 'testres';
+    out.textContent = t('upd.checking');
+    const v = await checkUpdates();
+    const i = v.info;
+    out.textContent = !i?.ok ? t('upd.fail', { error: i?.error || '?' }) : i.available ? t('upd.availFull', { v: i.latest, cur: i.current }) : t('upd.none');
+    out.classList.add(i?.ok ? 'is-ok' : 'is-fail');
   });
-  $('updDownload').addEventListener('click', async () => {
-    const base = updateState;
-    updateState = { ...base, busy: t('upd.downloading', { pct: 0 }), ok: true, available: true };
-    renderUpdates();
-    const r = await api.updates.download();
-    updateState = { ...base, ok: true, available: true, message: r.ok ? t('upd.done') : t('upd.dlfail', { error: r.error }), file: r.ok ? r.file : null };
-    renderUpdates();
-  });
-  $('updReveal').addEventListener('click', () => updateState?.file && api.updates.reveal(updateState.file));
-  $('updPage').addEventListener('click', () => api.updates.openPage());
   for (const b of document.querySelectorAll('[data-ext]')) b.addEventListener('click', () => api.app.openExternal(b.dataset.ext));
 
   api.on.status((st) => {
@@ -1282,19 +1697,22 @@ function wire() {
     logInput = fillInputSelect($('logInput'), logInput);
     if (!dirty) fillForm();
   });
-  api.on.updateAvailable(showUpdateBanner);
+  api.on.updateAvailable((view) => {
+    upd.view = view;
+    renderUpdateUi();
+  });
   api.on.delivery(renderDelivery);
   window.addEventListener('resize', () => requestAnimationFrame(() => { fitWallGrid(); fitWallNames(); }));
   api.on.updateProgress(({ got, total }) => {
-    if (updateState?.busy && total) {
-      updateState.busy = t('upd.downloading', { pct: Math.round((got / total) * 100) });
-      renderUpdates();
-    }
+    if (upd.phase !== 'downloading') return;
+    upd.got = got;
+    upd.total = total;
+    paintProgress();
   });
 }
 
 async function init() {
-  [settings, info, status, logos] = await Promise.all([api.settings.get(), api.app.info(), api.monitor.status(), api.logos.all()]);
+  [settings, info, status, logos, upd.view] = await Promise.all([api.settings.get(), api.app.info(), api.monitor.status(), api.logos.all(), api.updates.state()]);
   lang = settings.language;
   t = makeT(lang);
   $('ver').textContent = `v${info.version}`;
@@ -1309,6 +1727,7 @@ async function init() {
     if (!$('view-log').classList.contains('hidden')) renderLog(); // ongoing durations
   }, 1000);
   if (settings.display.startInWall) setWall(true);
+  showWhatsNew();
 }
 
 init();

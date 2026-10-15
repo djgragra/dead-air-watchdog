@@ -12,7 +12,7 @@
 <div class="app">
   <aside class="side">
     <div class="brand">
-      <img class="brand__icon" src="../assets/icon.png" alt="" width="36" height="36" />
+      <img class="brand__icon" src="logo.svg" alt="" width="38" height="38" />
       <div>
         <div class="brand__title" data-i18n="app.title">Dead Air Watchdog</div>
         <div class="brand__sub" data-i18n="app.subtitle">Silence monitor</div>
@@ -39,6 +39,7 @@
 
   <main class="main">
     <header class="topbar">
+      <div class="pill" id="statePill" data-state="idle" role="status"><span class="pill__dot" aria-hidden="true"></span><span id="pillText">—</span></div>
       <div class="clock" aria-hidden="true"><div class="clock__time" id="clockTime">--:--:--</div><div class="clock__date" id="clockDate">—</div></div>
       <div class="inputw"><div class="label" data-i18n="top.inputs">Inputs</div><div class="inputw__name" id="inputName">—</div></div>
       <div class="uptime"><div class="label" data-i18n="top.since">Monitoring for</div><div class="uptime__val" id="uptime">—</div></div>
@@ -47,15 +48,19 @@
     </header>
 
     <div class="update hidden" id="updateBanner" role="status">
-      <span id="updateText"></span>
-      <button type="button" class="btn btn--small" id="updateGo" data-i18n="upd.bannerBtn">Details</button>
+      <div class="update__main">
+        <strong id="updTitle"></strong>
+        <div class="update__notes" id="updNotes"></div>
+        <div class="progress hidden" id="updProgress"><div class="progress__bar"><div class="progress__fill" id="updFill"></div></div><span id="updPct"></span></div>
+      </div>
+      <div class="update__btns" id="updBtns"></div>
     </div>
 
     <!-- Dashboard -->
     <section class="view" id="view-dashboard">
       <p class="warn warn--box hidden" id="deliveryWarn" role="alert"></p>
       <div class="wallhead" id="wallHead">
-        <div class="clock"><div class="clock__time" id="wallClock">--:--:--</div><div class="clock__date" id="wallDate">—</div></div>
+        <div class="wallclock"><div class="wallclock__time" id="wallClock">--:--:--</div><div class="wallclock__date" id="wallDate">—</div></div>
         <div class="wallhead__state" id="wallState"></div>
         <button type="button" class="btn btn--small btn--ghost" id="wallExit" data-i18n="wall.exit">Exit wall display</button>
       </div>
@@ -74,7 +79,8 @@
       </div>
 
       <div class="card setup hidden" id="setupCard">
-        <div><h2 data-i18n="setup.title">Choose an input to begin</h2><p data-i18n="setup.text"></p></div>
+        <img class="setup__logo" src="logo.svg" alt="" width="84" height="84" />
+        <div class="setup__text"><h2 data-i18n="setup.title">Choose an input to begin</h2><p data-i18n="setup.text"></p></div>
         <button type="button" class="btn btn--primary" id="setupBtn" data-i18n="setup.btn">Open settings</button>
       </div>
 
@@ -84,6 +90,7 @@
         <div class="card kpi"><div class="label" data-i18n="kpi.today">Dead air today</div><div class="kpi__val" id="kpiToday">—</div><div class="kpi__sub" id="kpiTodaySub"></div></div>
         <div class="card kpi"><div class="label" id="kpiPeriodLabel">Last 7 days</div><div class="kpi__val" id="kpiPeriod">—</div><div class="kpi__sub" id="kpiPeriodSub"></div></div>
         <div class="card kpi"><div class="label" data-i18n="kpi.longest">Longest</div><div class="kpi__val" id="kpiLongest">—</div><div class="kpi__sub" id="kpiLongestSub"></div></div>
+        <div class="card kpi"><div class="label" data-i18n="kpi.micro">Micro-silences today</div><div class="kpi__val" id="kpiMicro">—</div><div class="kpi__sub" data-i18n="kpi.microSub"></div></div>
       </div>
 
       <div class="grid2" id="grid2">
@@ -113,6 +120,8 @@
             <div class="seg" role="group" aria-label="Filter">
               <button type="button" class="seg__btn is-active" data-filter="all" data-i18n="log.f.all">All</button>
               <button type="button" class="seg__btn" data-filter="dead-air" data-i18n="log.f.dead">Dead air</button>
+              <button type="button" class="seg__btn" data-filter="blip" data-i18n="log.f.micro">Micro-silences</button>
+              <button type="button" class="seg__btn" data-filter="pause" data-i18n="log.f.pause">Pauses</button>
               <button type="button" class="seg__btn" data-filter="gap" data-i18n="log.f.gap">Monitoring gaps</button>
             </div>
             <select id="logInput" class="select--small" aria-label="Input"></select>
@@ -136,6 +145,50 @@
           <button type="submit" class="btn btn--primary" id="saveBtn" data-i18n="set.save">Save settings</button>
         </div>
 
+        <div class="tabs" role="tablist" id="setTabs" aria-label="Settings">
+          <button type="button" class="tab" role="tab" data-tab="general" data-i18n="tab.general">General</button>
+          <button type="button" class="tab" role="tab" data-tab="inputs" data-i18n="tab.inputs">Inputs</button>
+          <button type="button" class="tab" role="tab" data-tab="alerts" data-i18n="tab.alerts">Alerts</button>
+          <button type="button" class="tab" role="tab" data-tab="updates" data-i18n="tab.updates">Updates</button>
+          <button type="button" class="tab" role="tab" data-tab="backup" data-i18n="tab.backup">Backup</button>
+        </div>
+
+        <div class="tabpane" data-pane="general">
+        <fieldset class="card">
+          <legend data-i18n="set.gen.title">General</legend>
+          <label class="field"><span data-i18n="set.gen.inst">Name of this installation</span><input type="text" id="gInst" maxlength="60" spellcheck="false" autocomplete="off" /></label>
+          <p class="hint" data-i18n="set.gen.instHint"></p>
+          <div class="cols">
+            <label class="check"><input type="checkbox" id="gBoot" /><span data-i18n="set.gen.boot">Start the app when I sign in</span></label>
+            <label class="check"><input type="checkbox" id="gMin" /><span data-i18n="set.gen.minimized">Start hidden in the tray</span></label>
+            <label class="check"><input type="checkbox" id="gAuto" /><span data-i18n="set.gen.auto">Start monitoring when the app opens</span></label>
+            <label class="check"><input type="checkbox" id="gAwake" /><span data-i18n="set.gen.awake">Keep the computer from sleeping while monitoring</span></label>
+            <label class="field"><span data-i18n="set.gen.retention">Keep the event log for (days)</span><input type="number" id="gRet" min="30" max="3650" step="1" inputmode="numeric" class="num" /></label>
+            <label class="field"><span data-i18n="set.gen.micro">Keep micro-silences for (days)</span><input type="number" id="gMicro" min="1" max="365" step="1" inputmode="numeric" class="num" /></label>
+          </div>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend data-i18n="set.disp.title">Display</legend>
+          <div class="cols">
+            <label class="field"><span data-i18n="set.disp.glow">Screen-edge glow</span>
+              <select id="dGlow"><option value="wall" data-i18n="set.disp.glow.wall">Only in wall display</option><option value="always" data-i18n="set.disp.glow.always">Always</option><option value="off" data-i18n="set.disp.glow.off">Off</option></select>
+            </label>
+            <label class="check"><input type="checkbox" id="dWall" /><span data-i18n="set.disp.start">Open in wall display mode</span></label>
+            <label class="field"><span data-i18n="set.disp.name">Names in the wall display</span>
+              <select id="dName"><option value="auto" data-i18n="set.disp.name.auto">Automatic: shrink long names to fit</option><option value="large" data-i18n="set.disp.name.large">Large</option><option value="medium" data-i18n="set.disp.name.medium">Medium</option><option value="small" data-i18n="set.disp.name.small">Small</option></select>
+            </label>
+            <label class="field"><span data-i18n="set.disp.logo">Logo in the wall display</span>
+              <select id="dLogo"><option value="small" data-i18n="set.disp.logo.small">Small, next to the name</option><option value="large" data-i18n="set.disp.logo.large">Large</option><option value="faded" data-i18n="set.disp.logo.faded">Soft background behind the tile</option></select>
+            </label>
+            <label class="field" id="dLogoOpField"><span data-i18n="set.disp.logoOpacity">Strength of the soft background</span><input type="range" id="dLogoOp" min="5" max="50" step="1" /></label>
+            <label class="field"><span data-i18n="set.disp.clock">Clock and date in the wall display</span>
+              <select id="dClock"><option value="max" data-i18n="set.disp.clock.max">As large as possible</option><option value="large" data-i18n="set.disp.clock.large">Large</option><option value="normal" data-i18n="set.disp.clock.normal">Normal</option></select>
+            </label>
+          </div>
+        </fieldset>
+        </div>
+        <div class="tabpane" data-pane="inputs">
         <fieldset class="card" id="inputsCard">
           <legend data-i18n="set.inputs.title">Inputs</legend>
           <p class="hint" data-i18n="set.inputs.hint"></p>
@@ -152,7 +205,8 @@
           <p class="warn hidden" id="devDenied" data-i18n="set.dev.denied"></p>
           <button type="button" class="link" id="micWhy" data-i18n="set.dev.why">Why does it need access to the microphone?</button>
         </fieldset>
-
+        </div>
+        <div class="tabpane" data-pane="alerts">
         <fieldset class="card">
           <legend data-i18n="set.n.title">Alerts</legend>
           <div class="cols">
@@ -170,7 +224,7 @@
             <label class="field"><span data-i18n="set.mail.host">Server</span><input type="text" id="mHost" spellcheck="false" placeholder="smtp.example.org" /></label>
             <label class="field"><span data-i18n="set.mail.port">Port</span><input type="number" id="mPort" min="1" max="65535" inputmode="numeric" class="num" /></label>
             <label class="field"><span data-i18n="set.mail.user">User</span><input type="text" id="mUser" spellcheck="false" autocomplete="off" /></label>
-            <label class="field"><span data-i18n="set.mail.pass">Password</span><input type="password" id="mPass" autocomplete="new-password" /></label>
+            <label class="field"><span data-i18n="set.mail.pass">Password</span><input type="password" id="mPass" autocomplete="new-password" data-pw /></label>
             <label class="field"><span data-i18n="set.mail.from">From address</span><input type="text" id="mFrom" spellcheck="false" placeholder="watchdog@example.org" /></label>
             <label class="field"><span data-i18n="set.mail.to">To (separate several with commas)</span><input type="text" id="mTo" spellcheck="false" placeholder="engineer@example.org" /></label>
           </div>
@@ -180,10 +234,20 @@
 
           <h3 data-i18n="set.tg.title">Telegram</h3>
           <label class="check"><input type="checkbox" id="tEnable" /><span data-i18n="set.tg.enable">Send Telegram alerts</span></label>
-          <label class="field"><span data-i18n="set.tg.token">Bot token</span><input type="password" id="tToken" spellcheck="false" autocomplete="new-password" placeholder="123456789:AA..." /></label>
+          <label class="field"><span data-i18n="set.tg.token">Bot token</span><input type="password" id="tToken" spellcheck="false" autocomplete="new-password" placeholder="123456789:AA..." data-pw /></label>
           <div class="field"><span data-i18n="set.tg.recipients">Recipients (chat IDs)</span><div id="tRecipients"></div>
             <button type="button" class="btn btn--small" id="tAdd" data-i18n="set.tg.add">Add recipient</button></div>
           <div class="row"><button type="button" class="btn btn--small" id="tTest" data-i18n="set.test">Send test</button><span class="testres" id="tRes" role="status"></span></div>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend data-i18n="set.grp.title">Alerts for several inputs at once</legend>
+          <label class="check"><input type="checkbox" id="grEnable" /><span data-i18n="set.grp.enable">Group the alerts</span></label>
+          <div class="cols">
+            <label class="field"><span data-i18n="set.grp.window">Grouping window (seconds)</span><input type="number" id="grWindow" min="10" max="600" step="5" inputmode="numeric" class="num" /></label>
+            <label class="check"><input type="checkbox" id="grFirst" /><span data-i18n="set.grp.first">Send the first alert right away</span></label>
+          </div>
+          <p class="hint" data-i18n="set.grp.hint"></p>
         </fieldset>
 
         <fieldset class="card">
@@ -197,26 +261,21 @@
           <p class="warn hidden" id="hBad" data-i18n="set.hb.bad"></p>
           <div class="row"><button type="button" class="btn btn--small" id="hTest" data-i18n="set.hb.test">Send test ping</button><span class="testres" id="hRes" role="status"></span></div>
         </fieldset>
-
-        <fieldset class="card">
-          <legend data-i18n="set.gen.title">General</legend>
-          <div class="cols">
-            <label class="check"><input type="checkbox" id="gBoot" /><span data-i18n="set.gen.boot">Start the app when I sign in</span></label>
-            <label class="check"><input type="checkbox" id="gMin" /><span data-i18n="set.gen.minimized">Start hidden in the tray</span></label>
-            <label class="check"><input type="checkbox" id="gAuto" /><span data-i18n="set.gen.auto">Start monitoring when the app opens</span></label>
-            <label class="check"><input type="checkbox" id="gAwake" /><span data-i18n="set.gen.awake">Keep the computer from sleeping while monitoring</span></label>
-            <label class="check"><input type="checkbox" id="gUpd" /><span data-i18n="set.gen.updates">Check for updates</span></label>
-            <label class="field"><span data-i18n="set.disp.glow">Screen-edge glow</span>
-              <select id="dGlow"><option value="wall" data-i18n="set.disp.glow.wall">Only in wall display</option><option value="always" data-i18n="set.disp.glow.always">Always</option><option value="off" data-i18n="set.disp.glow.off">Off</option></select>
-            </label>
-            <label class="check"><input type="checkbox" id="dWall" /><span data-i18n="set.disp.start">Open in wall display mode</span></label>
-            <label class="field"><span data-i18n="set.disp.name">Names in the wall display</span>
-              <select id="dName"><option value="auto" data-i18n="set.disp.name.auto">Automatic: shrink long names to fit</option><option value="large" data-i18n="set.disp.name.large">Large</option><option value="medium" data-i18n="set.disp.name.medium">Medium</option><option value="small" data-i18n="set.disp.name.small">Small</option></select>
-            </label>
-            <label class="field"><span data-i18n="set.gen.retention">Keep the event log for (days)</span><input type="number" id="gRet" min="30" max="3650" step="1" inputmode="numeric" class="num" /></label>
-          </div>
+        </div>
+        <div class="tabpane" data-pane="updates">
+        <fieldset class="card" id="updCard">
+          <legend data-i18n="upd.title">Updates</legend>
+          <label class="check"><input type="checkbox" id="gUpd" /><span data-i18n="set.gen.updates">Check for updates</span></label>
+          <label class="check"><input type="checkbox" id="uAlert" /><span data-i18n="upd.alert">Tell me by email or Telegram when a new version is out (once per version)</span></label>
+          <p class="hint" data-i18n="upd.alertHint"></p>
+          <p id="updCurrent"></p>
+          <p class="hint" id="updLast"></p>
+          <p class="testres" id="updRes" role="status"></p>
+          <div class="row" id="updActions"><button type="button" class="btn btn--small" id="updCheck" data-i18n="upd.check">Check now</button><span class="update__btns" id="updCardBtns"></span></div>
+          <p class="hint" data-i18n="upd.note2"></p>
         </fieldset>
-
+        </div>
+        <div class="tabpane" data-pane="backup">
         <fieldset class="card" id="bkCard">
           <legend data-i18n="bk.title">Configuration backup</legend>
           <p class="hint" data-i18n="bk.note"></p>
@@ -225,16 +284,7 @@
           <div class="row"><button type="button" class="btn btn--small" id="bkExport" data-i18n="bk.export">Export</button><button type="button" class="btn btn--small" id="bkImport" data-i18n="bk.import">Import</button><span class="testres" id="bkRes" role="status"></span></div>
           <div class="hidden" id="bkMissing"></div>
         </fieldset>
-
-        <fieldset class="card" id="updCard">
-          <legend data-i18n="upd.title">Updates</legend>
-          <label class="check"><input type="checkbox" id="uAlert" /><span data-i18n="upd.alert">Tell me by email or Telegram when a new version is out (once per version)</span></label>
-          <p class="hint" data-i18n="upd.alertHint"></p>
-          <p id="updCurrent"></p>
-          <div class="row"><button type="button" class="btn btn--small" id="updCheck" data-i18n="upd.check">Check now</button><span class="testres" id="updRes" role="status"></span></div>
-          <div class="row hidden" id="updActions"><button type="button" class="btn btn--small btn--primary" id="updDownload" data-i18n="upd.download">Download installer</button><button type="button" class="btn btn--small" id="updPage" data-i18n="upd.page">Open release page</button><button type="button" class="btn btn--small hidden" id="updReveal" data-i18n="upd.reveal">Show file</button></div>
-          <p class="hint" data-i18n="upd.note"></p>
-        </fieldset>
+        </div>
       </form>
     </section>
 
@@ -261,9 +311,20 @@
         <h3 data-i18n="help.hSnd"></h3><p data-i18n="help.pSnd"></p>
         <h3 data-i18n="help.hVal"></h3><p data-i18n="help.pVal"></p>
         <h3 data-i18n="help.hPriv"></h3><p data-i18n="help.pPriv"></p>
+        <h3 data-i18n="help.hMicro"></h3><p data-i18n="help.pMicro"></p>
+        <h3 data-i18n="help.hPause"></h3><p data-i18n="help.pPause"></p>
+        <h3 data-i18n="help.hGroup"></h3><p data-i18n="help.pGroup"></p>
         <h3 data-i18n="help.hInstall"></h3><p data-i18n="help.pInstall"></p>
+        <h3 data-i18n="help.hSupport"></h3><p data-i18n="help.pSupport"></p>
+        <div class="row">
+          <button type="button" class="btn btn--small" id="helpCopy" data-i18n="help.copy">Copy support info</button>
+          <button type="button" class="btn btn--small" id="helpLogs" data-i18n="help.logs">Open logs folder</button>
+          <button type="button" class="btn btn--small" id="helpCheck" data-i18n="help.check">Check for updates</button>
+          <span class="testres" id="helpRes" role="status"></span>
+        </div>
         <h3 data-i18n="help.hAbout"></h3><p id="aboutText"></p>
-        <p class="links"><button type="button" class="link" data-ext="https://onairgarage.com" data-i18n="help.link.site"></button> · <button type="button" class="link" data-ext="https://github.com/djgragra/dead-air-watchdog" data-i18n="help.link.repo"></button> · <button type="button" class="link" data-ext="mailto:hello@onairgarage.com" data-i18n="help.link.mail"></button></p>
+        <h3 data-i18n="help.hCredits"></h3><p data-i18n="help.pCredits"></p>
+        <p class="links"><button type="button" class="link" data-ext="https://onairgarage.com/tools/dead-air-watchdog/" data-i18n="help.link.tool"></button> · <button type="button" class="link" data-ext="https://github.com/djgragra/dead-air-watchdog/releases" data-i18n="help.link.releases"></button> · <button type="button" class="link" data-ext="https://onairgarage.com" data-i18n="help.link.site"></button> · <button type="button" class="link" data-ext="https://github.com/djgragra/dead-air-watchdog" data-i18n="help.link.repo"></button> · <button type="button" class="link" data-ext="mailto:hello@onairgarage.com" data-i18n="help.link.mail"></button></p>
       </article>
     </section>
   </main>
@@ -287,6 +348,18 @@
   <h2 id="confirmTitle" data-i18n="log.clearTitle"></h2>
   <p data-i18n="log.clearText"></p>
   <div class="dlg__actions"><button type="button" class="btn btn--ghost" id="confirmNo" data-i18n="log.cancel">Cancel</button><button type="button" class="btn btn--danger" id="confirmYes" data-i18n="log.clearYes">Delete</button></div>
+</dialog>
+
+<dialog id="updDlg" aria-labelledby="updDlgTitle">
+  <h2 id="updDlgTitle" data-i18n="upd.confirmTitle"></h2>
+  <p data-i18n="upd.confirmText"></p>
+  <div class="dlg__actions"><button type="button" class="btn btn--ghost" id="updDlgNo" data-i18n="log.cancel">Cancel</button><button type="button" class="btn btn--primary" id="updDlgYes" data-i18n="upd.confirmYes">Close and install</button></div>
+</dialog>
+
+<dialog id="newDlg" aria-labelledby="newDlgTitle">
+  <div class="newdlg__head"><img src="logo.svg" alt="" width="44" height="44" /><div><h2 id="newDlgTitle"></h2><p data-i18n="whatsnew.sub">What’s new</p></div></div>
+  <ul class="newdlg__list" id="newDlgList"></ul>
+  <div class="dlg__actions"><button type="button" class="btn btn--primary" id="newDlgClose" data-i18n="whatsnew.close">Close</button></div>
 </dialog>
 
 <script type="module" src="app.js"></script>
