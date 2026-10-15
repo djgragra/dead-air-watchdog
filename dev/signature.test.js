@@ -72,3 +72,26 @@ test('the changelog is packaged (What\'s new reads it) and has the entry of the 
   assert.ok(pkg.build.files.includes('CHANGELOG.md'));
   assert.match(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), new RegExp(`^## ${pkg.version.replace(/\./g, '\\.')} — \\d{4}-\\d{2}-\\d{2}$`, 'm'));
 });
+
+test('the logo and every icon file made from it exist (app icons for Windows, macOS and Linux, tray colours, menu-bar glyph)', () => {
+  const a = (f) => path.join(root, 'assets', f);
+  const png = (f) => {
+    const b = fs.readFileSync(a(f));
+    assert.equal(b.subarray(1, 4).toString(), 'PNG', f);
+    return { w: b.readUInt32BE(16), h: b.readUInt32BE(20) };
+  };
+  assert.match(fs.readFileSync(a('logo.svg'), 'utf8'), /^<svg /);
+  assert.match(fs.readFileSync(a('tray.svg'), 'utf8'), /^<svg /);
+  assert.equal(fs.readFileSync(a('logo.svg'), 'utf8'), fs.readFileSync(path.join(root, 'renderer', 'logo.svg'), 'utf8'), 'the window shows the same logo');
+  assert.deepEqual(png('icon.png'), { w: 1024, h: 1024 });
+  for (const s of [16, 32, 48, 64, 128, 256, 512]) assert.deepEqual(png(`linux-icons/${s}x${s}.png`), { w: s, h: s });
+  for (const st of ['idle', 'ok', 'counting', 'alarm']) assert.deepEqual(png(`tray-${st}.png`), { w: 32, h: 32 });
+  assert.deepEqual(png('trayTemplate.png'), { w: 22, h: 22 });
+  assert.deepEqual(png('trayTemplate@2x.png'), { w: 44, h: 44 });
+  const ico = fs.readFileSync(a('icon.ico'));
+  assert.equal(ico.readUInt16LE(2), 1); // type: icon
+  assert.equal(ico.readUInt16LE(4), 6); // six sizes
+  const icns = fs.readFileSync(a('icon.icns'));
+  assert.equal(icns.subarray(0, 4).toString(), 'icns');
+  assert.equal(icns.readUInt32BE(4), icns.length);
+});

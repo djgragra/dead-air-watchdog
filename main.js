@@ -279,6 +279,14 @@ function showWindow() {
 
 // ---- tray -------------------------------------------------------------------------------
 function trayImage(state) {
+  // macOS: the stopped state uses the single-colour menu-bar glyph (follows light / dark menu bar); the monitoring states keep their colour
+  if (process.platform === 'darwin' && state === 'idle') {
+    const glyph = nativeImage.createFromPath(path.join(__dirname, 'assets', 'trayTemplate.png'));
+    if (!glyph.isEmpty()) {
+      glyph.setTemplateImage(true);
+      return glyph;
+    }
+  }
   const file = path.join(__dirname, 'assets', `tray-${state}.png`);
   let img = nativeImage.createFromPath(file);
   if (img.isEmpty()) return nativeImage.createEmpty();
