@@ -55,7 +55,7 @@ test('a stream going silent and coming back: one email for the alarm and one for
     // two separate connections: the order they land in is not guaranteed
     assert.equal(smtp.messages.filter((x) => /Subject: .*DEAD AIR: Mount A/.test(x.data)).length, 1);
     assert.equal(smtp.messages.filter((x) => /Subject: .*Audio back: Mount A/.test(x.data)).length, 1);
-    for (const msg of smtp.messages) assert.deepEqual(msg.to.sort(), ['one@example.org', 'two@example.org', 'watchdog@example.org']);
+    for (const msg of smtp.messages) assert.deepEqual(msg.to.sort(), ['one@example.org', 'two@example.org']);
     assert.ok(results.every((r) => r.ok));
   } finally {
     await smtp.close();

@@ -29,13 +29,36 @@ function fakeMail({ rejected = [], fail = null } = {}) {
 
 const MAIL = { enabled: true, host: 'smtp.example.org', port: 587, secure: false, user: 'watchdog', pass: 'S3cretPass', from: 'watchdog@example.org', recipients: ['a@example.org', 'b@example.org', 'c@example.org'] };
 
-test('email: one message, all recipients in Bcc, "to" is the sender', async () => {
+test('email: one message, all recipients in Bcc, "to" is not the sender', async () => {
   const m = fakeMail();
   await sendEmail(MAIL, 'subject', 'body', 'en', m.factory);
   assert.deepEqual(m.calls.message.bcc, ['a@example.org', 'b@example.org', 'c@example.org']);
-  assert.equal(m.calls.message.to, 'watchdog@example.org');
+  assert.equal(m.calls.message.to, 'undisclosed-recipients:;');
   assert.equal(m.calls.message.from, 'watchdog@example.org');
   assert.equal(m.calls.closed, true);
+});
+
+// real nodemailer with its in-memory transport: the SMTP envelope is what the server delivers to
+async function envelopeOf(cfg) {
+  const { default: nodemailer } = await import('nodemailer');
+  let info = null;
+  const factory = () => {
+    const t = nodemailer.createTransport({ streamTransport: true, buffer: true });
+    return { sendMail: async (message) => (info = await t.sendMail(message)), close: () => {} };
+  };
+  await sendEmail(cfg, 'subject', 'body', 'en', factory);
+  return info.envelope;
+}
+
+test('email: the sender does not get a copy unless it is one of the recipients', async () => {
+  const env = await envelopeOf(MAIL);
+  assert.equal(env.from, 'watchdog@example.org');
+  assert.deepEqual(env.to, ['a@example.org', 'b@example.org', 'c@example.org']);
+});
+
+test('email: a sender who is also a recipient gets the message once', async () => {
+  const env = await envelopeOf({ ...MAIL, recipients: ['watchdog@example.org', 'a@example.org'] });
+  assert.deepEqual(env.to, ['watchdog@example.org', 'a@example.org']);
 });
 
 test('email: with a user name and no TLS from the start, STARTTLS is required', async () => {
@@ -214,10 +237,11 @@ test('email (real nodemailer): one message, every recipient in the envelope, no 
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
     await sendEmail({ enabled: true, host: '127.0.0.1', port: server.address().port, user: '', from: 'w@example.org', recipients: ['a@example.org', 'b@example.org'] }, 'subj', 'body', 'en');
-    assert.deepEqual(seen.filter((l) => /^RCPT/i.test(l)), ['RCPT TO:<w@example.org>', 'RCPT TO:<a@example.org>', 'RCPT TO:<b@example.org>']);
+    assert.deepEqual(seen.filter((l) => /^RCPT/i.test(l)), ['RCPT TO:<a@example.org>', 'RCPT TO:<b@example.org>']);
     assert.equal(seen.filter((l) => /^DATA/i.test(l)).length, 1);
     assert.ok(!seen.some((l) => /^Bcc:/i.test(l)));
-    assert.ok(seen.some((l) => /^To: w@example\.org/i.test(l)));
+    assert.ok(seen.some((l) => /^To: "?undisclosed-recipients"?:;/i.test(l)));
+    assert.ok(seen.some((l) => /^From: w@example\.org/i.test(l)));
   } finally {
     server.close();
   }

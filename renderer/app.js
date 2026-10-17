@@ -1,7 +1,7 @@
 // Dead Air Watchdog — window logic. The window never touches audio or secrets directly:
 // it talks to the main process through window.api (see preload.cjs).
 // © 2026 Graziano Melzi · OnAir Garage — MIT License
-import { LANGS, makeT } from './i18n.js';
+import { LANGS, makeT, tipUrl } from './i18n.js';
 import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
 import { wallGrid } from '../src/core/wall-grid.js';
@@ -1680,6 +1680,7 @@ function wire() {
     out.classList.add(i?.ok ? 'is-ok' : 'is-fail');
   });
   for (const b of document.querySelectorAll('[data-ext]')) b.addEventListener('click', () => api.app.openExternal(b.dataset.ext));
+  $('tipBtn').addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
 
   api.on.status((st) => {
     status = st;
