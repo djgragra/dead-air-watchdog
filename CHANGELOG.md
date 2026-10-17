@@ -1,5 +1,12 @@
 # Changelog
 
+## 26.10.7 — 2026-10-17
+
+- **Alerts by email no longer go to the sender.** The message used the sender's own address in "To" with the real recipients in Bcc, so the mailbox of the sender received a copy of every alert (two mailboxes read by the same person meant every alert twice). "To" is now `undisclosed-recipients:;` and only the real recipients are in the message envelope. A sender that is also a recipient still gets one copy.
+- **Tip card** in Help & about, at the bottom: the tip jar of the site, one line and a *Tip jar* button that opens the site page in your language. No pop-up, no reminder, nothing in the main window.
+- **Shared `updater` module** unchanged (version 2). Dependencies updated: Electron 44.9.0, Nodemailer 10.1.2.
+- Tests: 185 (4 new: the envelope with the real Nodemailer, a sender that is also a recipient, the tip card texts, link and packaging).
+
 ## 26.10.6 — 2026-10-15
 
 - **New logo and new look.** The logo is drawn as SVG (`assets/logo.svg`, `assets/tray.svg`): level bars fading to a flat line above the three lamps of the traffic light; the app icons (Windows, macOS, Linux), the colour tray icons and the single-colour macOS menu-bar glyph are generated from it with `dev/make-icons.mjs`. The window has a header with the status pill (OK, silence, dead air, paused), softer cards and tiles, icon buttons, small transitions (off when the system asks for less motion), a light theme with more contrast, a welcome screen with the logo and settings in tabs (General, Inputs, Alerts, Updates, Backup). What the app does with the audio is unchanged.

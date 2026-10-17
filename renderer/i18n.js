@@ -401,6 +401,8 @@ export const STRINGS = {
     'help.pCredits': 'MIT licence. Built with Electron (MIT) and Nodemailer (MIT-0). Free, not code-signed, no accounts and no analytics.',
     'help.link.tool': 'Tool page',
     'help.link.releases': 'Releases',
+    'tip.text': 'Useful to you? A coffee for the mechanics is always welcome.',
+    'tip.btn': 'Tip jar',
     'help.hMicro': 'Micro-silences',
     'help.pMicro': 'Every drop below the threshold, however short, is written in the event log as a “micro-silence” with the time, the duration and the cause: silence (data with a low level), no data (the input stopped) or late measurements (nothing arrived for over 1.5 s: often the computer is overloaded). No email or Telegram is sent and the moment the alarm starts does not change. The dashboard counts them per input and in total for today. They are kept for the number of days in Settings → General (30 by default). Use them to tune the threshold and the seconds, to see whether the fault is in the program, in the stream or in the network, and to show data to whoever provides the stream.',
     'help.hPause': 'Pause for maintenance',
@@ -806,6 +808,8 @@ export const STRINGS = {
     'help.pCredits': 'Licenza MIT. Costruita con Electron (MIT) e Nodemailer (MIT-0). Gratuita, non firmata, senza account e senza analytics.',
     'help.link.tool': 'Pagina dello strumento',
     'help.link.releases': 'Release',
+    'tip.text': 'Ti è utile? Un caffè per i meccanici è sempre ben accetto.',
+    'tip.btn': 'Salvadanaio',
     'help.hMicro': 'Micro-silenzi',
     'help.pMicro': 'Ogni calo sotto la soglia, anche brevissimo, viene scritto nel registro eventi come «micro-silenzio» con ora, durata e causa: silenzio (dati con livello basso), nessun dato (l’ingresso si è fermato) o misure in ritardo (per più di 1,5 s non è arrivato nulla: spesso il computer è sovraccarico). Non parte nessuna email né messaggio Telegram e il momento in cui scatta l’allarme non cambia. La dashboard li conta per ingresso e in totale per oggi. Si conservano per i giorni indicati in Impostazioni → Generali (30 di default). Servono per tarare soglia e secondi, per capire se il guasto è nel programma, nel flusso o nella rete, e per mostrare dati a chi fornisce il flusso.',
     'help.hPause': 'Pausa per manutenzione',
@@ -1211,6 +1215,8 @@ export const STRINGS = {
     'help.pCredits': 'Licencia MIT. Hecha con Electron (MIT) y Nodemailer (MIT-0). Gratuita, sin firma de código, sin cuentas ni analíticas.',
     'help.link.tool': 'Página de la herramienta',
     'help.link.releases': 'Versiones',
+    'tip.text': '¿Te resulta útil? Un café para los mecánicos siempre es bienvenido.',
+    'tip.btn': 'Hucha',
     'help.hMicro': 'Microsilencios',
     'help.pMicro': 'Cada caída por debajo del umbral, por breve que sea, se escribe en el registro de eventos como «microsilencio» con la hora, la duración y la causa: silencio (datos con nivel bajo), sin datos (la entrada se detuvo) o mediciones con retraso (más de 1,5 s sin recibir nada: a menudo el equipo está sobrecargado). No se envía ningún correo ni mensaje de Telegram y el momento en que salta la alarma no cambia. El panel los cuenta por entrada y en total para hoy. Se conservan los días indicados en Ajustes → General (30 por defecto). Sirven para afinar el umbral y los segundos, para saber si el fallo está en el programa, en el stream o en la red, y para enseñar datos a quien suministra el stream.',
     'help.hPause': 'Pausa por mantenimiento',
@@ -1219,6 +1225,14 @@ export const STRINGS = {
     'help.pGroup': 'Cuando varias entradas caen dentro de la ventana de agrupación (60 s por defecto), el primer aviso sale enseguida y los demás siguen en un solo mensaje con la lista; igual para las recuperaciones. En Ajustes → Avisos puedes apagarlo o hacer que también el primero espere la ventana.'
   }
 };
+
+// The tip jar page of the site, in the language of the window (the app never links to a payment page directly).
+export const TIP_URLS = {
+  en: 'https://onairgarage.com/support/',
+  it: 'https://onairgarage.com/it/support/',
+  es: 'https://onairgarage.com/es/support/'
+};
+export const tipUrl = (lang) => TIP_URLS[lang] || TIP_URLS.en;
 
 export function makeT(lang) {
   const table = STRINGS[lang] || STRINGS.en;

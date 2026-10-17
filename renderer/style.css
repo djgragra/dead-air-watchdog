@@ -454,3 +454,13 @@ body.wall.idle-cursor, body.wall.idle-cursor * { cursor: none; }
   *, *::before, *::after { transition: none !important; animation: none !important; }
   .edge.is-on { opacity: .9; }
 }
+
+/* Tip card (Help & about, bottom): the jar of the site, one line, one cherry pill. Same in both themes. */
+.tip { display: flex; align-items: center; gap: 16px; margin: 26px 0 4px; padding: 14px 18px; background: var(--elev2); border: 1px solid var(--border); border-radius: var(--radius); }
+.tip__art { flex: none; width: 88px; height: auto; }
+.tip__body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
+.help .tip__text { margin: 0; font-size: 13px; color: var(--dim); }
+.tip__btn { padding: 6px 16px; border: 2px solid #fbf4e4; border-radius: 999px; background: #c8232c; color: #fbf4e4; font: inherit; font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: background .15s; }
+.tip__btn:hover { background: #de2d37; }
+.tip__btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+:root[data-theme="light"] .tip__btn { border-color: #fff; box-shadow: 0 0 0 1px #9c1820; }

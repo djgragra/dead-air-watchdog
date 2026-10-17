@@ -28,7 +28,7 @@ export async function sendEmail(cfg, subject, text, lang = 'en', transportFactor
   });
   try {
     // one message, all recipients in Bcc: they do not see each other's addresses
-    const info = await transporter.sendMail({ from: cfg.from || cfg.user, to: cfg.from || cfg.user, bcc: to, subject, text });
+    const info = await transporter.sendMail({ from: cfg.from || cfg.user, to: 'undisclosed-recipients:;', bcc: to, subject, text });
     const rejected = info?.rejected || [];
     if (rejected.length) throw new Error(`${rejected.join(', ')}: ${t(lang, 'err.emailRejected')}`);
   } catch (err) {
