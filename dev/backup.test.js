@@ -4,6 +4,8 @@ import { buildExport, prepareImport, missingSecrets, backupFileName, BACKUP_APP 
 import { sanitizeSettings, MAX_INPUTS } from '../src/store.js';
 import { secretSlots, mapSecrets, stripSecrets } from '../src/secrets.js';
 
+// Built at run time so that no token-shaped text sits in the repository (secret scanners flag it); same shape as a real one.
+const FAKE_TELEGRAM_TOKEN = ['123456789', 'A'.repeat(35)].join(':');
 // fictitious data only
 const base = () =>
   sanitizeSettings({
@@ -17,11 +19,11 @@ const base = () =>
     ],
     notifications: {
       email: { enabled: true, host: 'smtp.example.org', user: 'watchdog', pass: 'S3cretPass', from: 'w@example.org', recipients: ['a@example.org', 'b@example.org'] },
-      telegram: { enabled: true, botToken: '123456789:AAEhBOweik6ad9r_QXMENQjcrvKa1B2c3d4', recipients: [{ chatId: '111', note: 'Anna' }] }
+      telegram: { enabled: true, botToken: FAKE_TELEGRAM_TOKEN, recipients: [{ chatId: '111', note: 'Anna' }] }
     },
     heartbeat: { enabled: true, url: 'https://ping.example.org/TOKEN123', intervalMin: 5 }
   });
-const SECRETS = ['S3cretPass', '123456789:AAEhBOweik6ad9r_QXMENQjcrvKa1B2c3d4', 'TOKEN123', 'hunter22'];
+const SECRETS = ['S3cretPass', FAKE_TELEGRAM_TOKEN, 'TOKEN123', 'hunter22'];
 const NOW = Date.UTC(2026, 9, 11, 10, 0, 0);
 
 test('file: name, fields and what is left out', () => {
@@ -79,7 +81,7 @@ test('import: the password of this PC is kept for the same server and user, not 
   const f = buildExport(base(), { now: NOW });
   const same = prepareImport(f, base(), { mode: 'replace' });
   assert.equal(same.settings.notifications.email.pass, 'S3cretPass');
-  assert.equal(same.settings.notifications.telegram.botToken, '123456789:AAEhBOweik6ad9r_QXMENQjcrvKa1B2c3d4');
+  assert.equal(same.settings.notifications.telegram.botToken, FAKE_TELEGRAM_TOKEN);
   assert.equal(same.settings.heartbeat.url, 'https://ping.example.org/TOKEN123');
   assert.equal(same.settings.inputs[0].streamUrl, 'http://dj:hunter22@stream.example.org:8000/live');
   assert.deepEqual(same.missing, []);

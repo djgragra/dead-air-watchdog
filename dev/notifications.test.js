@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { sendEmail, sendTelegram, TELEGRAM_TOKEN_RE } from '../src/notifications.js';
 import { parseAddresses } from '../src/addresses.js';
+// Built at run time so that no token-shaped text sits in the repository (secret scanners flag it); same shape as a real one.
+const FAKE_TELEGRAM_TOKEN = ['123456789', 'A'.repeat(35)].join(':');
 import { sanitizeSettings, createStore } from '../src/store.js';
 import { MESSAGES } from '../src/messages.js';
 
@@ -118,7 +120,7 @@ test('settings: an old file on disk is read, rewritten in the new shape and keep
   assert.equal('to' in saved.settings.notifications.email, false);
 });
 
-const TG = { enabled: true, botToken: '123456789:AAEhBOweik6ad9r_QXMENQjcrvKa1B2c3d4', recipients: [{ chatId: '111', note: 'Anna' }, { chatId: '222', note: 'Luca' }] };
+const TG = { enabled: true, botToken: FAKE_TELEGRAM_TOKEN, recipients: [{ chatId: '111', note: 'Anna' }, { chatId: '222', note: 'Luca' }] };
 
 test('telegram: token format is checked and the page preview is off', async () => {
   assert.ok(TELEGRAM_TOKEN_RE.test(TG.botToken));
