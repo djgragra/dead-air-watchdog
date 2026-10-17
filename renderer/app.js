@@ -1680,7 +1680,8 @@ function wire() {
     out.classList.add(i?.ok ? 'is-ok' : 'is-fail');
   });
   for (const b of document.querySelectorAll('[data-ext]')) b.addEventListener('click', () => api.app.openExternal(b.dataset.ext));
-  $('tipBtn').addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
+  // The jar is a second link to the same page; keyboard and screen readers keep the button.
+  for (const id of ['tipBtn', 'tipJar']) $(id).addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
 
   api.on.status((st) => {
     status = st;
