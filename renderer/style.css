@@ -458,6 +458,9 @@ body.wall.idle-cursor, body.wall.idle-cursor * { cursor: none; }
 /* Tip card (Help & about, bottom): the jar of the site, one line, one cherry pill. Same in both themes. */
 .tip { display: flex; align-items: center; gap: 16px; margin: 26px 0 4px; padding: 14px 18px; background: var(--elev2); border: 1px solid var(--border); border-radius: var(--radius); }
 .tip__art { flex: none; width: 88px; height: auto; }
+.tip__jar { flex: none; display: block; padding: 0; border: 0; background: none; font: inherit; line-height: 0; cursor: pointer; transition: transform .15s ease; }
+.tip__jar:hover { transform: rotate(-4deg) scale(1.06); }
+@media (prefers-reduced-motion: reduce) { .tip__jar { transition: none; } .tip__jar:hover { transform: none; } }
 .tip__body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; min-width: 0; }
 .help .tip__text { margin: 0; font-size: 13px; color: var(--dim); }
 .tip__btn { padding: 6px 16px; border: 2px solid #fbf4e4; border-radius: 999px; background: #c8232c; color: #fbf4e4; font: inherit; font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; cursor: pointer; transition: background .15s; }

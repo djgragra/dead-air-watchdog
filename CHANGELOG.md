@@ -1,5 +1,11 @@
 # Changelog
 
+## 26.10.8 — 2026-10-17
+
+- The tip jar in Help & about is a link too: a click on the jar does what the Tip jar button does.
+- Dependencies: `http-cache-semantics` 4.2.0 → 4.3.0 (patch, build tooling only; clears the one "high" audit advisory). No other minor or patch update was available.
+- Tests: 187 (2 new: the jar has the same handler and the three links as the button, and is hidden from keyboard and screen readers; hover and reduced motion).
+
 ## 26.10.7 — 2026-10-17
 
 - **Alerts by email no longer go to the sender.** The message used the sender's own address in "To" with the real recipients in Bcc, so the mailbox of the sender received a copy of every alert (two mailboxes read by the same person meant every alert twice). "To" is now `undisclosed-recipients:;` and only the real recipients are in the message envelope. A sender that is also a recipient still gets one copy.
