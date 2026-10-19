@@ -42,8 +42,12 @@ By Graziano Melzi · [OnAir Garage](https://onairgarage.com) — contact: hello@
 ![Wall display with long names](docs/screenshots/05-wall-display.png)
 ![Inputs with the buttons to change their order](docs/screenshots/06-inputs-order.png)
 ![Wall display with 32 inputs](docs/screenshots/07-wall-32-inputs.png)
+
+![Wall display: the large ALL OK](docs/screenshots/17-wall-all-ok.png)
 ![A field that failed the check, marked in red](docs/screenshots/08-invalid-field.png)
 ![Micro-silences in the event log](docs/screenshots/09-micro-silences.png)
+
+![Summary: availability per input and common problems](docs/screenshots/18-summary.png)
 ![Update banner](docs/screenshots/10-update-banner.png)
 ![Updates settings with the download verified](docs/screenshots/11-update-settings.png)
 ![Wall display with large logos](docs/screenshots/12-wall-large-logo.png)
