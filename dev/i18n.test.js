@@ -29,9 +29,16 @@ test('makeT falls back to English and fills placeholders', () => {
 test('keys built at run time exist in every language', () => {
   const keys = [
     ...['run-installer', 'open-image', 'reveal'].map((k) => `upd.after.${k}`),
-    ...['silence', 'offline', 'nodata', 'late', 'maintenance', 'quit', 'unknown', 'suspended'].map((k) => `cause.${k}`),
+    ...['silence', 'offline', 'frozen', 'nodata', 'late', 'maintenance', 'quit', 'unknown', 'suspended'].map((k) => `cause.${k}`),
     ...['idle', 'starting', 'ok', 'counting', 'alarm', 'paused', 'off', 'incomplete'].map((k) => `st.${k}`),
     ...['blip', 'pause', 'dead'].map((k) => `kind.${k}`)
   ];
   for (const l of ['en', 'it', 'es']) for (const k of keys) assert.ok(k in STRINGS[l], `${l} ${k}`);
+});
+
+test('Italian keeps the English words "Dashboard" and "Wall display" (rule of 19 October 2026)', () => {
+  for (const [k, v] of Object.entries(STRINGS.it)) assert.doesNotMatch(v, /cruscott|modalità parete|schermo a muro/i, k);
+  assert.equal(STRINGS.it['nav.dashboard'], 'Dashboard');
+  assert.equal(STRINGS.it['wall.enter'], 'Wall display');
+  assert.match(STRINGS.it['set.disp.name'], /wall display/);
 });

@@ -62,3 +62,19 @@ test('tip card: the jar tilts on hover and stays still with reduced motion', () 
   assert.match(css, /\.tip__jar:hover \{ transform: rotate\(-4deg\) scale\(1\.06\); \}/);
   assert.match(css, /prefers-reduced-motion: reduce\) \{ \.tip__jar \{ transition: none; \} \.tip__jar:hover \{ transform: none; \} \}/);
 });
+
+test('window: the summary card, the options of an input and the big status line are wired', () => {
+  const html = fs.readFileSync(new URL('../renderer/index.html', import.meta.url), 'utf8');
+  const app = fs.readFileSync(new URL('../renderer/app.js', import.meta.url), 'utf8');
+  const css = fs.readFileSync(new URL('../renderer/style.css', import.meta.url), 'utf8');
+  const pre = fs.readFileSync(new URL('../preload.cjs', import.meta.url), 'utf8');
+  const main = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  for (const id of ['reportCard', 'reportPeriod', 'reportBox', 'reportCommon', 'reportCsv']) assert.match(html, new RegExp(`id="${id}"`), id);
+  assert.match(pre, /report: \{[^}]*'report:get'[^}]*'report:export'/s);
+  assert.match(main, /handle\('report:get'/);
+  assert.match(main, /handle\('report:export'/);
+  // what the settings form reads must be what the store keeps: otherwise saving the form would reset the options
+  for (const f of ['yellowDelaySec', 'frozenSec', 'frozenToleranceDb', 'schedule']) assert.match(app, new RegExp(`${f}: `), f);
+  assert.match(app, /function fitWallStatus/);
+  assert.match(css, /\.wallhead__state\.is-big \{[^}]*white-space: nowrap/);
+});

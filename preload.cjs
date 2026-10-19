@@ -25,6 +25,10 @@ contextBridge.exposeInMainWorld('api', {
     export: (format) => invoke('events:export', format),
     clear: () => invoke('events:clear')
   },
+  report: {
+    get: (period) => invoke('report:get', period),
+    export: (period) => invoke('report:export', period)
+  },
   stats: {
     daily: (days, inputId) => invoke('stats:daily', days, inputId)
   },

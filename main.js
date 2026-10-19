@@ -18,9 +18,10 @@ import { createLogos } from './src/logos.js';
 import { engineHandlers } from './src/engine-events.js';
 import { shardInputs } from './src/engine-shards.js';
 import { aggregateDeadAir } from './src/core/stats.js';
+import { buildReport, findCommonProblems, periodRange, reportToCsv } from './src/core/report.js';
 import { toCsv, toJson } from './src/core/export.js';
 import { formatDuration } from './src/core/format.js';
-import { t, alertPrefix, installationName, withPrefix } from './src/messages.js';
+import { t, alertPrefix, installationName, withPrefix, inputLabel } from './src/messages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -525,8 +526,29 @@ function registerIpc() {
     const stamp = new Date().toISOString().slice(0, 10);
     const r = await dialog.showSaveDialog(mainWindow, { defaultPath: path.join(app.getPath('documents'), `dead-air-log-${stamp}.${ext}`), filters: [{ name: ext.toUpperCase(), extensions: [ext] }] });
     if (r.canceled || !r.filePath) return { ok: false, canceled: true };
-    fs.writeFileSync(r.filePath, ext === 'json' ? toJson(events, { version: app.getVersion() }) : toCsv(events));
+    const common = findCommonProblems(events, { totalInputs: store.getSettings().inputs.length }).eventIds;
+    fs.writeFileSync(r.filePath, ext === 'json' ? toJson(events, { version: app.getVersion() }, common) : toCsv(events, common));
     return { ok: true, file: r.filePath, count: events.length };
+  });
+  // Availability per input over a period, and the moments when several inputs went down together (src/core/report.js).
+  const reportFor = (period) => {
+    const s = store.getSettings();
+    const kind = ['thisMonth', 'lastMonth', 'last7', 'last30'].includes(period) ? period : 'thisMonth';
+    const range = periodRange(kind, Date.now());
+    const inputs = s.inputs.map((i) => ({ id: i.id, name: inputLabel(s.language, i), schedule: i.schedule }));
+    return { kind, report: buildReport(store.listEvents(), inputs, range) };
+  };
+  handle('report:get', (period) => {
+    const { kind, report } = reportFor(period);
+    return { kind, ...report };
+  });
+  handle('report:export', async (period) => {
+    const { kind, report } = reportFor(period);
+    const stamp = new Date().toISOString().slice(0, 10);
+    const r = await dialog.showSaveDialog(mainWindow, { defaultPath: path.join(app.getPath('documents'), `dead-air-summary-${kind}-${stamp}.csv`), filters: [{ name: 'CSV', extensions: ['csv'] }] });
+    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    fs.writeFileSync(r.filePath, reportToCsv(report));
+    return { ok: true, file: r.filePath, count: report.rows.length };
   });
   handle('stats:daily', (days, inputId) => aggregateDeadAir(store.listEvents().filter((e) => !inputId || e.inputId === inputId), [7, 14, 30].includes(days) ? days : 7, Date.now()));
 
