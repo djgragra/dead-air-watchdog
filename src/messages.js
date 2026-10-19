@@ -6,8 +6,10 @@ const MSG = {
   en: {
     'cause.silence': 'silence (audio below the threshold)',
     'cause.offline': 'input offline (no audio delivered)',
+    'cause.frozen': 'frozen audio (the level does not move)',
     'alarm.subject': '[Dead Air Watchdog] DEAD AIR: {input}',
     'alarm.body': 'Dead air on "{input}".\nCause: {cause}\nStarted: {start}\nThreshold: {threshold} dBFS, alert after {seconds} s.\nAlert sent: {now}\nMachine: {host}',
+    'alarm.bodyFrozen': 'Frozen audio on "{input}".\nCause: {cause}\nStarted: {start}\nThe level stayed within {tolerance} dB for {seconds} s, above the threshold of {threshold} dBFS: a steady tone, a stuck loop or constant noise.\nAlert sent: {now}\nMachine: {host}',
     'reminder.subject': '[Dead Air Watchdog] STILL DEAD AIR: {input}',
     'reminder.body': 'Still dead air on "{input}" for {duration}.\nCause: {cause}\nStarted: {start}\nMachine: {host}',
     'recovered.subject': '[Dead Air Watchdog] Audio back: {input}',
@@ -49,8 +51,10 @@ const MSG = {
   it: {
     'cause.silence': 'silenzio (audio sotto soglia)',
     'cause.offline': 'ingresso offline (nessun audio ricevuto)',
+    'cause.frozen': 'audio bloccato (il livello non si muove)',
     'alarm.subject': '[Dead Air Watchdog] DEAD AIR: {input}',
     'alarm.body': 'Dead air su "{input}".\nCausa: {cause}\nInizio: {start}\nSoglia: {threshold} dBFS, avviso dopo {seconds} s.\nAvviso inviato: {now}\nMacchina: {host}',
+    'alarm.bodyFrozen': 'Audio bloccato su "{input}".\nCausa: {cause}\nInizio: {start}\nIl livello è rimasto entro {tolerance} dB per {seconds} s, sopra la soglia di {threshold} dBFS: un tono fisso, un loop bloccato o rumore costante.\nAvviso inviato: {now}\nMacchina: {host}',
     'reminder.subject': '[Dead Air Watchdog] ANCORA DEAD AIR: {input}',
     'reminder.body': 'Ancora dead air su "{input}" da {duration}.\nCausa: {cause}\nInizio: {start}\nMacchina: {host}',
     'recovered.subject': '[Dead Air Watchdog] Audio ripristinato: {input}',
@@ -92,8 +96,10 @@ const MSG = {
   es: {
     'cause.silence': 'silencio (audio por debajo del umbral)',
     'cause.offline': 'entrada sin conexión (no llega audio)',
+    'cause.frozen': 'audio bloqueado (el nivel no se mueve)',
     'alarm.subject': '[Dead Air Watchdog] DEAD AIR: {input}',
     'alarm.body': 'Dead air en "{input}".\nCausa: {cause}\nInicio: {start}\nUmbral: {threshold} dBFS, aviso tras {seconds} s.\nAviso enviado: {now}\nEquipo: {host}',
+    'alarm.bodyFrozen': 'Audio bloqueado en "{input}".\nCausa: {cause}\nInicio: {start}\nEl nivel se mantuvo dentro de {tolerance} dB durante {seconds} s, por encima del umbral de {threshold} dBFS: un tono fijo, un bucle atascado o ruido constante.\nAviso enviado: {now}\nEquipo: {host}',
     'reminder.subject': '[Dead Air Watchdog] SIGUE EL DEAD AIR: {input}',
     'reminder.body': 'Sigue el dead air en "{input}" desde hace {duration}.\nCausa: {cause}\nInicio: {start}\nEquipo: {host}',
     'recovered.subject': '[Dead Air Watchdog] Audio recuperado: {input}',
@@ -179,11 +185,13 @@ export function buildAlert(lang, kind, d) {
     end: d.end ? when(d.end) : '',
     now: when(d.now),
     threshold: d.thresholdDb,
-    seconds: d.minSilenceSec,
+    seconds: d.cause === 'frozen' ? d.frozenSec : d.minSilenceSec,
+    tolerance: d.frozenToleranceDb,
     duration: formatDuration(d.durationMs ?? 0),
     host: d.host
   };
-  return { subject: t(lang, `${kind}.subject`, vars), text: t(lang, `${kind}.body`, vars) };
+  const body = kind === 'alarm' && d.cause === 'frozen' ? 'alarm.bodyFrozen' : `${kind}.body`;
+  return { subject: t(lang, `${kind}.subject`, vars), text: t(lang, body, vars) };
 }
 
 // One message for several inputs that failed (kind 'alarm') or came back (kind 'recovered') together.

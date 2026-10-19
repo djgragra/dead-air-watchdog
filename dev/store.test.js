@@ -113,3 +113,18 @@ test('wall display name size: default automatic, only the known values are kept'
   for (const v of ['auto', 'large', 'medium', 'small']) assert.equal(sanitizeSettings({ display: { wallNameSize: v } }).display.wallNameSize, v);
   assert.equal(sanitizeSettings({ display: { wallNameSize: 'huge' } }).display.wallNameSize, 'auto');
 });
+
+test('inputs: new options have defaults (yellow after 2 s, frozen audio off, no monitoring hours) and stay inside their limits', () => {
+  const s = sanitizeSettings({ inputs: [{ type: 'stream', streamUrl: 'http://a.example.org/x' }] });
+  const i = s.inputs[0];
+  assert.equal(i.yellowDelaySec, 2);
+  assert.equal(i.frozenSec, 0);
+  assert.equal(i.frozenToleranceDb, 1);
+  assert.deepEqual(i.schedule, { enabled: false, rules: [] });
+  const w = sanitizeSettings({ inputs: [{ type: 'stream', streamUrl: 'http://a.example.org/x', yellowDelaySec: 999, frozenSec: 3, frozenToleranceDb: 50, schedule: { enabled: true, rules: [{ days: [6], from: '22:30', to: '06:15' }] } }] }).inputs[0];
+  assert.equal(w.yellowDelaySec, 60);
+  assert.equal(w.frozenSec, 10, 'a frozen-audio time that is on is at least 10 s');
+  assert.equal(w.frozenToleranceDb, 6);
+  assert.deepEqual(w.schedule.rules[0].days, [6]);
+  assert.equal(sanitizeSettings({ inputs: [{ type: 'stream', streamUrl: 'http://a.example.org/x', yellowDelaySec: 0, frozenSec: 'x' }] }).inputs[0].yellowDelaySec, 0);
+});

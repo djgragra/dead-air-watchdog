@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mapSecrets } from './secrets.js';
 import { parseAddresses } from './addresses.js';
+import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 
 export const MAX_INPUTS = 32;
 
@@ -19,6 +20,10 @@ export const DEFAULT_INPUT = Object.freeze({
   streamUrl: '',
   thresholdDb: -50,
   minSilenceSec: 30,
+  yellowDelaySec: 2, // the traffic light of the input stays green until the audio has been below the threshold this long (0 = at once)
+  frozenSec: 0, // 0 = off; otherwise: a level that stays (almost) the same for this long above the threshold is an alarm ("frozen audio")
+  frozenToleranceDb: 1, // how much the level may vary and still count as the same
+  schedule: DEFAULT_SCHEDULE, // monitoring hours: see src/core/schedule.js
   enabled: true
 });
 
@@ -103,6 +108,11 @@ function sanitizeInput(raw, usedIds, hasDevice) {
   i.streamUrl = String(i.streamUrl || '').trim().slice(0, 2000);
   i.thresholdDb = clamp(i.thresholdDb, -90, -10, d.thresholdDb);
   i.minSilenceSec = Math.round(clamp(i.minSilenceSec, 1, 3600, d.minSilenceSec));
+  i.yellowDelaySec = Math.round(clamp(i.yellowDelaySec, 0, 60, d.yellowDelaySec) * 10) / 10;
+  const fz = Number(i.frozenSec);
+  i.frozenSec = Number.isFinite(fz) && fz > 0 ? Math.round(clamp(fz, 10, 3600, 60)) : 0;
+  i.frozenToleranceDb = Math.round(clamp(i.frozenToleranceDb, 0.1, 6, d.frozenToleranceDb) * 10) / 10;
+  i.schedule = sanitizeSchedule(i.schedule, { thresholdDb: i.thresholdDb, minSilenceSec: i.minSilenceSec });
   i.enabled = i.enabled !== false;
   return Object.fromEntries(Object.keys(d).map((k) => [k, i[k]]));
 }

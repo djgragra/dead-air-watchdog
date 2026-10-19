@@ -6,6 +6,8 @@ import { createDetector } from './core/detector.js';
 import { loudestChannel } from './core/level.js';
 import { inputLabel, buildAlert, buildGroupAlert } from './messages.js';
 import { createGrouper } from './grouping.js';
+import { createFrozenDetector } from './core/frozen.js';
+import { activeRule, windowEnd } from './core/schedule.js';
 
 export const TICK_MS = 250;
 const STALE_MS = 1500; // no level report for this long = the input delivers nothing
@@ -37,10 +39,25 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   const inputById = (id) => settings().inputs.find((i) => i.id === id);
   const activeInputs = () => settings().inputs.filter(isUsable);
 
+  // What applies to an input right now: its own values, or those of the monitoring-hours rule that is active.
+  // { thresholdDb, minSilenceSec, off, until }: off = nothing is judged (until = when the window ends).
+  function effective(inp, t) {
+    const rule = activeRule(inp.schedule, t);
+    if (!rule) return { thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec, off: false, until: null };
+    if (rule.mode === 'off') return { thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec, off: true, until: windowEnd(rule, t) };
+    return { thresholdDb: rule.thresholdDb, minSilenceSec: rule.minSilenceSec, off: false, until: null };
+  }
+
+  const frozenOf = (inp) => createFrozenDetector({ frozenMs: (inp.frozenSec || 0) * 1000, toleranceDb: inp.frozenToleranceDb });
+
   function makeChannel(inp, t) {
     return {
       id: inp.id,
-      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, blips: true }),
+      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, yellowDelayMs: inp.yellowDelaySec * 1000, blips: true }),
+      frozen: frozenOf(inp), // frozen audio: only fed when the input has frozenSec > 0
+      frozenEventId: null,
+      eff: effective(inp, t),
+      scheduledOff: false,
       startedAt: t,
       lastSampleAt: null,
       windowMax: -Infinity,
@@ -50,11 +67,12 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     };
   }
 
-  const anyAlarm = () => [...chans.values()].some((c) => c.detector.snapshot(now()).status === 'alarm');
+  const anyAlarm = () => [...chans.values()].some((c) => c.detector.snapshot(now()).status === 'alarm' || c.frozen.snapshot(now()).alarm);
 
   function alertData(inp, extra) {
     const s = settings();
-    return { input: inputLabel(s.language, inp), thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec, host, now: now(), ...extra };
+    const eff = chans.get(inp.id)?.eff || inp;
+    return { input: inputLabel(s.language, inp), thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
   }
 
   // Several inputs failing (or coming back) together go out as one message (src/grouping.js); a lone one is not delayed.
@@ -89,8 +107,9 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     const inp = inputById(ch.id);
     if (!inp) return;
     const label = inputLabel(settings().language, inp);
+    const { thresholdDb, minSilenceSec } = ch.eff;
     if (ev.type === 'alarm') {
-      const rec = store.addEvent({ kind: 'dead-air', cause: ev.cause, start: ev.start, end: null, input: label, inputId: inp.id, thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec });
+      const rec = store.addEvent({ kind: 'dead-air', cause: ev.cause, start: ev.start, end: null, input: label, inputId: inp.id, thresholdDb, minSilenceSec });
       ch.openEventId = rec.id;
       ch.lastNotifyAt = now();
       send(inp, 'alarm', { cause: ev.cause, start: ev.start });
@@ -108,9 +127,36 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       publish.events();
     } else if (ev.type === 'blip') {
       // a drop below the threshold that ended before the alarm: kept in the log, never sent anywhere
-      store.addEvent({ kind: 'blip', cause: ev.cause, start: ev.start, end: ev.end, input: label, inputId: inp.id, thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec });
+      store.addEvent({ kind: 'blip', cause: ev.cause, start: ev.start, end: ev.end, input: label, inputId: inp.id, thresholdDb, minSilenceSec });
       publish.events();
     }
+  }
+
+  // Frozen audio (the level does not move): its own alarm, with its own log entry, next to the one of the silence detector.
+  function handleFrozenEvent(ch, ev) {
+    const inp = inputById(ch.id);
+    if (!inp) return;
+    const label = inputLabel(settings().language, inp);
+    if (ev.type === 'alarm') {
+      const rec = store.addEvent({ kind: 'dead-air', cause: 'frozen', start: ev.start, end: null, input: label, inputId: inp.id, thresholdDb: ch.eff.thresholdDb, minSilenceSec: inp.frozenSec, toleranceDb: inp.frozenToleranceDb });
+      ch.frozenEventId = rec.id;
+      ch.lastNotifyAt = now();
+      send(inp, 'alarm', { cause: 'frozen', start: ev.start });
+      desktopNotify('alarm', { input: label });
+      alarmSound(true);
+      log(`ALARM ${label}: frozen audio since ${new Date(ev.start).toISOString()}`, 'error');
+    } else {
+      // 'recovered': the level moves again; 'ended': the audio went away (silence or no data have their own alarm)
+      if (ch.frozenEventId) store.updateEvent(ch.frozenEventId, { end: ev.end });
+      ch.frozenEventId = null;
+      if (ev.type === 'recovered') {
+        send(inp, 'recovered', { cause: 'frozen', start: ev.start, end: ev.end, durationMs: ev.durationMs });
+        desktopNotify('recovered', { input: label, durationMs: ev.durationMs });
+        log(`${label}: audio moving again after ${Math.round(ev.durationMs / 1000)} s`, 'info');
+      }
+      if (!anyAlarm()) alarmSound(false);
+    }
+    publish.events();
   }
 
   // Closes an alarm that cannot continue to be observed (monitoring stopped, input removed, process suspended, paused).
@@ -118,23 +164,31 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     const open = ch.detector.abort(end);
     if (open && ch.openEventId) store.updateEvent(ch.openEventId, { end: open.end, ...patch });
     ch.openEventId = null;
-    if (open && !anyAlarm()) alarmSound(false);
-    return open;
+    const frozen = ch.frozen.reset(end);
+    if (frozen && ch.frozenEventId) store.updateEvent(ch.frozenEventId, { end: frozen.end, ...patch });
+    ch.frozenEventId = null;
+    if ((open || frozen) && !anyAlarm()) alarmSound(false);
+    return open || frozen;
   }
 
   function channelStatus(ch) {
     const p = pauses.get(ch.id);
     if (p && p.until > now()) return { state: 'paused', cause: null, fault: ch.fault, elapsedMs: 0, remainingMs: 0, silenceStart: null, pausedUntil: p.until };
+    if (ch.scheduledOff) return { state: 'paused', scheduled: true, cause: null, fault: ch.fault, elapsedMs: 0, remainingMs: 0, silenceStart: null, pausedUntil: ch.eff.until };
     const snap = ch.detector.snapshot(now());
+    const fz = ch.frozen.snapshot(now());
     const waiting = ch.lastSampleAt === null && !ch.fault && now() - ch.startedAt < START_GRACE_MS;
-    const state = waiting || snap.status === 'idle' ? 'starting' : snap.status;
-    return { state, cause: snap.cause, fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart };
+    // the traffic light stays green while the silence is shorter than the yellow delay of the input
+    const raw = waiting || snap.status === 'idle' ? 'starting' : snap.status;
+    if (fz.alarm && raw !== 'alarm') return { state: 'alarm', cause: 'frozen', fault: ch.fault, elapsedMs: fz.elapsedMs, remainingMs: 0, silenceStart: fz.start, thresholdDb: ch.eff.thresholdDb };
+    const state = raw === 'counting' && !snap.yellow ? 'ok' : raw;
+    return { state, cause: snap.cause, fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart, thresholdDb: ch.eff.thresholdDb };
   }
 
   function status() {
     const s = settings();
     const inputs = s.inputs.map((inp) => {
-      const base = { id: inp.id, name: inputLabel(s.language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec, channelPair: inp.channelPair };
+      const base = { id: inp.id, name: inputLabel(s.language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: chans.get(inp.id)?.eff.thresholdDb ?? inp.thresholdDb, minSilenceSec: chans.get(inp.id)?.eff.minSilenceSec ?? inp.minSilenceSec, channelPair: inp.channelPair };
       const p = pauses.get(inp.id);
       if (p && p.until > now()) base.pausedUntil = p.until;
       const ch = chans.get(inp.id);
@@ -157,7 +211,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
 
   function emitStatus(force = false) {
     const st = status();
-    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.state, i.fault, i.cause, i.pausedUntil || 0, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
+    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.state, i.fault, i.cause, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
     if (force || key !== lastStatusKey) {
       lastStatusKey = key;
       publish.status(st);
@@ -173,6 +227,25 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       }
       api.resumeInput(ch.id, 'expired'); // the pause ends by itself: the countdown starts again from here
     }
+    // monitoring hours: outside them nothing is judged (like a pause that ends by itself); a rule can also change the
+    // threshold and the time before the alarm for its hours, and the countdown in progress keeps its start
+    const eff = effective(inp, t);
+    if (eff.off) {
+      if (!ch.scheduledOff) {
+        ch.scheduledOff = true;
+        closeOpenAlarm(ch, t, { scheduled: true }); // an alarm that was open ends here, without a "recovered" message
+      }
+      ch.eff = eff;
+      ch.windowMax = -Infinity;
+      return;
+    }
+    if (ch.scheduledOff) {
+      ch.scheduledOff = false;
+      ch.detector.abort(t); // the hours start again: the countdown starts again from here
+      ch.frozen.reset(t);
+    }
+    ch.eff = eff;
+    ch.detector.configure({ thresholdDb: eff.thresholdDb, minSilenceMs: eff.minSilenceSec * 1000 });
     const waitingForFirst = ch.lastSampleAt === null && !ch.fault && t - ch.startedAt < START_GRACE_MS;
     if (!waitingForFirst) {
       const stale = ch.lastSampleAt === null || t - ch.lastSampleAt > STALE_MS;
@@ -180,13 +253,16 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       // why a sample without level counts as below: the input is stopped / failed ('nodata'), or the measurement is late ('late')
       const reason = level === null ? (ch.fault ? 'nodata' : 'late') : undefined;
       for (const ev of ch.detector.feed(level, t, reason)) handleEvent(ch, ev);
+      if (inp.frozenSec > 0) for (const ev of ch.frozen.feed(level, t, eff.thresholdDb)) handleFrozenEvent(ch, ev);
     }
     ch.windowMax = -Infinity;
     const rem = settings().notifications.reminderMin;
     const snap = ch.detector.snapshot(t);
-    if (rem > 0 && snap.status === 'alarm' && t - ch.lastNotifyAt >= rem * 60_000) {
+    const fz = ch.frozen.snapshot(t);
+    if (rem > 0 && (snap.status === 'alarm' || fz.alarm) && t - ch.lastNotifyAt >= rem * 60_000) {
       ch.lastNotifyAt = t;
-      send(inp, 'reminder', { cause: snap.cause, start: snap.silenceStart, durationMs: snap.elapsedMs });
+      if (snap.status === 'alarm') send(inp, 'reminder', { cause: snap.cause, start: snap.silenceStart, durationMs: snap.elapsedMs });
+      else send(inp, 'reminder', { cause: 'frozen', start: fz.start, durationMs: fz.elapsedMs });
     }
   }
 
@@ -272,6 +348,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       const ch = chans.get(id);
       if (ch) {
         ch.detector.abort(t);
+        ch.frozen.reset(t);
         ch.windowMax = -Infinity;
       }
       savePauses();
@@ -329,7 +406,18 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       for (const inp of list) {
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));
-        else ch.detector.configure({ thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000 });
+        else {
+          ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000 });
+          ch.frozen.configure({ frozenMs: (inp.frozenSec || 0) * 1000, toleranceDb: inp.frozenToleranceDb });
+          if (!inp.frozenSec) {
+            const ended = ch.frozen.reset(t);
+            if (ended) handleFrozenEvent(ch, ended);
+          }
+          // threshold and time before the alarm of the hours that apply are set again at the next tick
+          const eff = effective(inp, t);
+          ch.eff = eff;
+          ch.detector.configure({ thresholdDb: eff.thresholdDb, minSilenceMs: eff.minSilenceSec * 1000 });
+        }
       }
       engine.sync(list.map(engineInput));
       emitStatus(true);

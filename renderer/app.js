@@ -7,6 +7,7 @@ import { moveItem } from '../src/core/order.js';
 import { wallGrid } from '../src/core/wall-grid.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 import { hasTransparentEdge } from '../src/core/logo-alpha.js';
+import { findCommonProblems } from '../src/core/report.js';
 
 const api = window.api;
 const $ = (id) => document.getElementById(id);
@@ -220,7 +221,36 @@ function fitWallNames() {
     }
   };
   for (const tile of tiles.values()) shrink(tile.name);
-  shrink($('wallState')); // the big line at the top ("DEAD AIR · <name>") carries a name too
+  if (!fitWallStatus()) shrink($('wallState')); // the big line at the top ("DEAD AIR · <name>") carries a name too
+}
+
+// Wall display: the short status ("ALL OK") grows to fill the width the clock leaves free, up to the height of the
+// clock; the long ones ("DEAD AIR · name") keep the size above, which shrinks the names to fit.
+function fitWallStatus() {
+  const n = $('wallState');
+  const head = $('wallHead');
+  const short = !!wall && !['alarm', 'counting'].includes(document.body.dataset.overall);
+  n.classList.toggle('is-big', short);
+  head.classList.remove('is-stacked');
+  n.style.removeProperty('font-size');
+  if (!short) return false;
+  const clock = $('wallClock');
+  const cap = Math.max(32, Math.round((clock.getBoundingClientRect().height || window.innerHeight * 0.17) * 1.05));
+  const grow = () => {
+    let size = Math.min(cap, Math.round(window.innerHeight * 0.3));
+    n.style.fontSize = `${size}px`;
+    while (size > 24 && n.scrollWidth > n.clientWidth + 1) {
+      size = Math.floor(size * 0.95);
+      n.style.fontSize = `${size}px`;
+    }
+    return size;
+  };
+  // a narrow screen (4:3) leaves little room next to the clock: the status goes on a line of its own
+  if (grow() < cap * 0.55) {
+    head.classList.add('is-stacked');
+    grow();
+  }
+  return true;
 }
 
 // Wall display: puts every tile on screen. Picks the number of columns (and so rows) that gives the biggest
@@ -327,10 +357,11 @@ function renderTiles() {
     const paused = inp.state === 'paused';
     tile.pause.title = t('pause.btn');
     tile.pause.setAttribute('aria-label', t('pause.btn'));
-    tile.pause.classList.toggle('hidden', !status.running || !['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state));
+    tile.pause.classList.toggle('hidden', !status.running || !!inp.scheduled || !['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state));
     renderTileBlips(tile, inp.id);
     let sub = '';
-    if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
+    if (paused && inp.scheduled) sub = t('st.sub.scheduled', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
+    else if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
     else if (inp.state === 'counting') sub = t('st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
     else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
     else if (inp.state === 'ok') sub = t('meter.threshold', { db: inp.thresholdDb });
@@ -553,7 +584,7 @@ function noteOf(e) {
   if (e.kind === 'gap') return t('log.gapNote');
   if (e.kind === 'blip') return [t(`cause.${e.cause}`), t('log.blipNote')].join(' · ');
   if (e.kind === 'pause') return e.end ? (e.expired ? t('log.pauseExpired') : t('log.pauseNote', { until: clock(e.end) })) : t('log.pauseNote', { until: clock(e.until) });
-  return [e.interrupted ? t('log.interrupted') : '', e.pausedBy ? t('log.pausedBy') : ''].filter(Boolean).join(' · ');
+  return [e.interrupted ? t('log.interrupted') : '', e.pausedBy ? t('log.pausedBy') : '', e.scheduled ? t('log.scheduled') : ''].filter(Boolean).join(' · ');
 }
 
 function renderRecent() {
@@ -580,6 +611,9 @@ function renderRecent() {
   box.appendChild(table);
 }
 
+// events that belong to a moment when several inputs went down together (probable problem of the network or of this computer)
+let commonIds = new Set();
+
 function renderLog() {
   const box = $('logTable');
   box.replaceChildren();
@@ -605,7 +639,13 @@ function renderLog() {
     c.appendChild(typeBadge(e));
     tr.appendChild(c);
     tr.appendChild(el('td', '', e.input || ''));
-    tr.appendChild(el('td', '', noteOf(e)));
+    const note = el('td', '', noteOf(e));
+    if (commonIds.has(e.id)) {
+      const b = el('span', 'badge badge--common', t('log.common'));
+      b.title = t('log.commonTip');
+      note.append(note.textContent ? ' · ' : '', b);
+    }
+    tr.appendChild(note);
     body.appendChild(tr);
   }
   table.appendChild(body);
@@ -615,10 +655,72 @@ function renderLog() {
 
 async function refreshEvents() {
   events = await api.events.list();
+  commonIds = findCommonProblems(events, { totalInputs: settings?.inputs.length || 0 }).eventIds;
   renderRecent();
   renderLog();
+  refreshReport();
   renderKpis();
   renderTiles(); // the micro-silence counters
+}
+
+// ---- summary (availability per input, common problems) -----------------------------------------------------------------
+let reportPeriod = 'thisMonth';
+
+const pctText = (v) => (v === null ? '—' : `${v.toFixed(v >= 99.995 ? 0 : 2)}%`);
+
+async function refreshReport() {
+  const box = $('reportBox');
+  if (!box || !settings) return;
+  const r = await api.report.get(reportPeriod);
+  const day = (ts) => new Date(ts).toLocaleDateString(localeFor(lang), { day: '2-digit', month: '2-digit', year: 'numeric' });
+  $('reportRange').textContent = `${day(r.from)} – ${day(r.to)}`;
+  box.replaceChildren();
+  if (!r.rows.length) {
+    box.appendChild(el('p', 'empty-msg', t('report.noInputs')));
+  } else {
+    const table = el('table');
+    const head = el('tr');
+    for (const k of ['input', 'avail', 'alarms', 'down', 'longest', 'micro', 'common']) head.appendChild(el('th', '', t(`report.col.${k}`)));
+    const thead = el('thead');
+    thead.appendChild(head);
+    table.appendChild(thead);
+    const body = el('tbody');
+    for (const row of r.rows) {
+      const tr = el('tr');
+      tr.appendChild(el('td', '', row.input));
+      const a = el('td', 'mono', pctText(row.availability));
+      if (row.availability !== null && row.commonAlarms > 0) a.title = t('report.withoutCommon', { pct: pctText(row.availabilityWithoutCommon) });
+      tr.appendChild(a);
+      tr.appendChild(el('td', 'mono', String(row.alarms)));
+      tr.appendChild(el('td', 'mono', row.downMs ? formatDuration(row.downMs) : '—'));
+      tr.appendChild(el('td', 'mono', row.longestMs ? formatDuration(row.longestMs) : '—'));
+      tr.appendChild(el('td', 'mono', String(row.micro)));
+      tr.appendChild(el('td', 'mono', row.commonAlarms ? `${row.commonAlarms} (${pctText(row.availabilityWithoutCommon)})` : '—'));
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+    box.appendChild(table);
+    box.appendChild(el('p', 'hint', t('report.note')));
+  }
+  const cbox = $('reportCommon');
+  cbox.replaceChildren();
+  if (r.common.length) {
+    cbox.appendChild(el('h3', '', t('report.commonTitle', { n: r.common.length })));
+    cbox.appendChild(el('p', 'hint', t('report.commonHint', { n: r.minInputs, s: Math.round(r.windowMs / 1000) })));
+    const ul = el('ul', 'common__list');
+    for (const g of r.common.slice(0, 50)) ul.appendChild(el('li', '', `${formatDateTime(g.start, lang)} · ${t('report.commonLine', { n: g.inputs.length })}: ${g.inputs.join(', ')}`));
+    cbox.appendChild(ul);
+    if (r.common.length > 50) cbox.appendChild(el('p', 'hint', t('log.limited', { n: 50 })));
+  }
+}
+
+async function doExportReport() {
+  const r = await api.report.export(reportPeriod);
+  if (r.ok) {
+    const n = $('logNotice');
+    n.textContent = `${t('report.exported', { n: r.count })} ${r.file}`;
+    n.classList.remove('hidden');
+  }
 }
 
 async function doExport(format) {
@@ -721,6 +823,119 @@ function logoFromFile(file) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+// ---- per-input options: yellow delay, frozen audio, monitoring hours -------------------------------------------------------
+const WEEK = [1, 2, 3, 4, 5, 6, 0]; // Monday first
+const dayName = (d) => new Date(2026, 9, 18 + d).toLocaleDateString(localeFor(lang), { weekday: 'short' });
+
+function decimalInput(cls, min, max, step, value) {
+  const n = numberInput(cls, min, max, value);
+  n.step = step;
+  n.inputMode = 'decimal';
+  return n;
+}
+
+function buildRule(rule) {
+  const row = el('div', 'rule');
+  const days = el('span', 'rule__days');
+  for (const d of WEEK) {
+    const l = el('label', 'daychip');
+    const c = el('input', 'rule-day');
+    c.type = 'checkbox';
+    c.value = d;
+    c.checked = rule.days.includes(d);
+    l.append(c, el('span', '', dayName(d)));
+    days.appendChild(l);
+  }
+  const from = el('input', 'rule-from');
+  from.type = 'time';
+  from.value = rule.from;
+  from.required = true;
+  const to = el('input', 'rule-to');
+  to.type = 'time';
+  to.value = rule.to;
+  to.required = true;
+  const mode = el('select', 'rule-mode');
+  for (const m of ['off', 'custom']) {
+    const o = new Option(t(`sched.mode.${m}`), m);
+    o.dataset.i18n = `sched.mode.${m}`;
+    mode.appendChild(o);
+  }
+  mode.value = rule.mode;
+  const thr = numberInput('rule-thr', -90, -10, rule.thresholdDb);
+  const min = numberInput('rule-min', 1, 3600, rule.minSilenceSec);
+  const custom = el('span', 'rule__custom');
+  custom.append(tel('span', '', 'sched.thr'), thr, tel('span', '', 'sched.min'), min);
+  custom.classList.toggle('hidden', rule.mode !== 'custom');
+  const rm = tel('button', 'btn btn--small btn--ghost rule-remove', 'sched.remove');
+  rm.type = 'button';
+  const when = el('span', 'rule__when');
+  when.append(tel('span', '', 'sched.from'), from, tel('span', '', 'sched.to'), to, mode);
+  row.append(days, when, custom, rm);
+  return row;
+}
+
+function buildAdvanced(inp) {
+  const box = el('details', 'input__adv');
+  box.appendChild(tel('summary', '', 'adv.title'));
+  const body = el('div', 'adv__body');
+
+  // yellow delay
+  const yellow = decimalInput('in-yellow', 0, 60, 0.5, inp.yellowDelaySec ?? 2);
+  const yRow = el('div', 'row');
+  yRow.append(yellow, tel('span', 'hint', 'adv.sec'));
+  const yField = el('div', 'field');
+  yField.append(tel('span', '', 'adv.yellow'), yRow, tel('p', 'hint', 'adv.yellow.hint'));
+
+  // frozen audio
+  const fOn = el('input', 'in-frozen-on');
+  fOn.type = 'checkbox';
+  fOn.checked = (inp.frozenSec || 0) > 0;
+  const fLabel = el('label', 'check');
+  fLabel.append(fOn, tel('span', '', 'adv.frozen'));
+  const fSec = numberInput('in-frozen-sec', 10, 3600, inp.frozenSec > 0 ? inp.frozenSec : 60);
+  const fTol = decimalInput('in-frozen-tol', 0.1, 6, 0.1, inp.frozenToleranceDb ?? 1);
+  const fRow = el('div', 'row adv__frozen');
+  fRow.append(tel('span', '', 'adv.frozen.for'), fSec, tel('span', 'hint', 'adv.sec'), tel('span', '', 'adv.frozen.tol'), fTol, tel('span', 'hint', 'adv.db'));
+  fRow.classList.toggle('hidden', !fOn.checked);
+  const fField = el('div', 'field');
+  fField.append(fLabel, fRow, tel('p', 'hint', 'adv.frozen.hint'));
+
+  // monitoring hours
+  const sch = inp.schedule || { enabled: false, rules: [] };
+  const sOn = el('input', 'in-sched-on');
+  sOn.type = 'checkbox';
+  sOn.checked = !!sch.enabled;
+  const sLabel = el('label', 'check');
+  sLabel.append(sOn, tel('span', '', 'sched.title'));
+  const rules = el('div', 'rules');
+  for (const r of sch.rules) rules.appendChild(buildRule(r));
+  const add = tel('button', 'btn btn--small in-rule-add', 'sched.add');
+  add.type = 'button';
+  const sBox = el('div', 'sched__box');
+  sBox.append(rules, add);
+  sBox.classList.toggle('hidden', !sOn.checked);
+  const sField = el('div', 'field');
+  sField.append(sLabel, sBox, tel('p', 'hint', 'sched.hint'));
+
+  body.append(yField, fField, sField);
+  box.appendChild(body);
+  return box;
+}
+
+function readSchedule(card) {
+  return {
+    enabled: card.querySelector('.in-sched-on').checked,
+    rules: [...card.querySelectorAll('.rule')].map((r) => ({
+      days: [...r.querySelectorAll('.rule-day:checked')].map((c) => Number(c.value)),
+      from: r.querySelector('.rule-from').value,
+      to: r.querySelector('.rule-to').value,
+      mode: r.querySelector('.rule-mode').value,
+      thresholdDb: Number(r.querySelector('.rule-thr').value),
+      minSilenceSec: Number(r.querySelector('.rule-min').value)
+    }))
+  };
 }
 
 function buildInputCard(inp, open) {
@@ -829,6 +1044,7 @@ function buildInputCard(inp, open) {
   const cols = el('div', 'cols');
   cols.append(thrField, minField);
   body.appendChild(cols);
+  body.appendChild(buildAdvanced(inp));
 
   const remove = tel('button', 'btn btn--small btn--danger in-remove', 'set.in.remove');
   remove.type = 'button';
@@ -873,7 +1089,7 @@ function renderInputsList() {
 }
 
 function addInput(type) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, enabled: true };
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, schedule: { enabled: false, rules: [] }, enabled: true };
   const card = buildInputCard(base, true);
   $('inputsList').appendChild(card);
   updateInputsFooter();
@@ -896,7 +1112,11 @@ function readInputs() {
       deviceLabel: deviceId ? sel.selectedOptions[0]?.textContent || '' : '',
       channelPair: type === 'device' ? Number(card.querySelector('.in-chan').value) || 0 : 0,
       thresholdDb: Number(card.querySelector('.in-thr').value),
-      minSilenceSec: Number(card.querySelector('.in-min').value)
+      minSilenceSec: Number(card.querySelector('.in-min').value),
+      yellowDelaySec: Number(card.querySelector('.in-yellow').value) || 0,
+      frozenSec: card.querySelector('.in-frozen-on').checked ? Number(card.querySelector('.in-frozen-sec').value) || 60 : 0,
+      frozenToleranceDb: Number(card.querySelector('.in-frozen-tol').value) || 1,
+      schedule: readSchedule(card)
     };
   });
 }
@@ -910,6 +1130,9 @@ function onInputsEvent(e) {
     card.classList.remove('has-error');
     card.querySelector('.in-bad')?.classList.add('hidden');
   }
+  if (tg.classList.contains('in-frozen-on')) card.querySelector('.adv__frozen').classList.toggle('hidden', !tg.checked);
+  if (tg.classList.contains('in-sched-on')) card.querySelector('.sched__box').classList.toggle('hidden', !tg.checked);
+  if (tg.classList.contains('rule-mode')) tg.closest('.rule').querySelector('.rule__custom').classList.toggle('hidden', tg.value !== 'custom');
   if (tg.classList.contains('in-thr-range')) card.querySelector('.in-thr').value = tg.value;
   if (tg.classList.contains('in-thr')) card.querySelector('.in-thr-range').value = clamp(Number(tg.value) || -50, -90, -10);
   card.querySelector('.input__title').textContent = inputTitle(card);
@@ -945,7 +1168,14 @@ function onInputsClick(e) {
     mv.focus();
     return;
   }
-  if (tg.classList.contains('in-remove')) {
+  if (tg.classList.contains('in-rule-add')) {
+    const inp = readInputs().find((i) => i.id === card.dataset.id);
+    card.querySelector('.rules').appendChild(buildRule({ days: [1, 2, 3, 4, 5], from: '00:00', to: '06:00', mode: 'off', thresholdDb: inp.thresholdDb, minSilenceSec: inp.minSilenceSec }));
+    setDirty(true);
+  } else if (tg.classList.contains('rule-remove')) {
+    tg.closest('.rule').remove();
+    setDirty(true);
+  } else if (tg.classList.contains('in-remove')) {
     card.remove();
     updateInputsFooter();
     setDirty(true);
@@ -1595,6 +1825,11 @@ function wire() {
     });
   }
   $('exportCsv').addEventListener('click', () => doExport('csv'));
+  $('reportPeriod').addEventListener('change', (e) => {
+    reportPeriod = e.target.value;
+    refreshReport();
+  });
+  $('reportCsv').addEventListener('click', doExportReport);
   $('exportJson').addEventListener('click', () => doExport('json'));
   $('clearLog').addEventListener('click', () => $('confirmDlg').showModal());
   $('confirmNo').addEventListener('click', () => $('confirmDlg').close());
@@ -1680,7 +1915,8 @@ function wire() {
     out.classList.add(i?.ok ? 'is-ok' : 'is-fail');
   });
   for (const b of document.querySelectorAll('[data-ext]')) b.addEventListener('click', () => api.app.openExternal(b.dataset.ext));
-  $('tipBtn').addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
+  // The jar is a second link to the same page; keyboard and screen readers keep the button.
+  for (const id of ['tipBtn', 'tipJar']) $(id).addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
 
   api.on.status((st) => {
     status = st;

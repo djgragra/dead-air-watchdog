@@ -114,6 +114,22 @@
 
     <!-- Event log -->
     <section class="view hidden" id="view-log">
+      <div class="card" id="reportCard">
+        <div class="card__head"><h2 data-i18n="report.title">Summary</h2>
+          <div class="toolbar">
+            <select id="reportPeriod" class="select--small" aria-label="Period">
+              <option value="thisMonth" data-i18n="report.p.thisMonth">This month</option>
+              <option value="lastMonth" data-i18n="report.p.lastMonth">Last month</option>
+              <option value="last7" data-i18n="report.p.last7">Last 7 days</option>
+              <option value="last30" data-i18n="report.p.last30">Last 30 days</option>
+            </select>
+            <span class="hint" id="reportRange"></span>
+            <button type="button" class="btn btn--small" id="reportCsv" data-i18n="report.csv">Export summary CSV</button>
+          </div>
+        </div>
+        <div class="tablewrap" id="reportBox"></div>
+        <div id="reportCommon"></div>
+      </div>
       <div class="card">
         <div class="card__head"><h2 data-i18n="log.title">Event log</h2>
           <div class="toolbar">
@@ -313,6 +329,8 @@
         <h3 data-i18n="help.hPriv"></h3><p data-i18n="help.pPriv"></p>
         <h3 data-i18n="help.hMicro"></h3><p data-i18n="help.pMicro"></p>
         <h3 data-i18n="help.hPause"></h3><p data-i18n="help.pPause"></p>
+        <h3 data-i18n="help.hHours"></h3><p data-i18n="help.pHours"></p>
+        <h3 data-i18n="help.hReport"></h3><p data-i18n="help.pReport"></p>
         <h3 data-i18n="help.hGroup"></h3><p data-i18n="help.pGroup"></p>
         <h3 data-i18n="help.hInstall"></h3><p data-i18n="help.pInstall"></p>
         <h3 data-i18n="help.hSupport"></h3><p data-i18n="help.pSupport"></p>
@@ -326,7 +344,7 @@
         <h3 data-i18n="help.hCredits"></h3><p data-i18n="help.pCredits"></p>
         <p class="links"><button type="button" class="link" data-ext="https://onairgarage.com/tools/dead-air-watchdog/" data-i18n="help.link.tool"></button> · <button type="button" class="link" data-ext="https://github.com/djgragra/dead-air-watchdog/releases" data-i18n="help.link.releases"></button> · <button type="button" class="link" data-ext="https://onairgarage.com" data-i18n="help.link.site"></button> · <button type="button" class="link" data-ext="https://github.com/djgragra/dead-air-watchdog" data-i18n="help.link.repo"></button> · <button type="button" class="link" data-ext="mailto:hello@onairgarage.com" data-i18n="help.link.mail"></button></p>
         <aside class="tip" aria-labelledby="tipText">
-          <img class="tip__art" src="img/tip-jar.png" alt="" width="88" height="65" />
+          <button type="button" class="tip__jar" id="tipJar" tabindex="-1" aria-hidden="true"><img class="tip__art" src="img/tip-jar.png" alt="" width="88" height="65" /></button>
           <div class="tip__body">
             <p class="tip__text" id="tipText" data-i18n="tip.text"></p>
             <button type="button" class="tip__btn" id="tipBtn" data-i18n="tip.btn"></button>

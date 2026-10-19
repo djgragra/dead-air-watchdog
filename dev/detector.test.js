@@ -126,3 +126,80 @@ test('minSilenceMs 0 alarms on the first silent sample', () => {
   const ev = d.feed(-90, T0);
   assert.equal(ev[0]?.type, 'alarm');
 });
+
+// speech: 250 ms windows, a second of talk and half a second of pause below the threshold, over and over
+const speech = (t) => (t % 1500 < 1000 ? -25 : -70);
+
+test('speech with pauses shorter than the release time is audio: no alarm while the programme goes on', () => {
+  const d = createDetector({ thresholdDb: -50, minSilenceMs: 30_000, releaseMs: 2_000 });
+  const ev = run(d, speech, 0, 120_000, 250);
+  assert.deepEqual(ev, []);
+});
+
+test('speech with a yellow delay of 2 s: the traffic light never leaves green', () => {
+  const d = createDetector({ thresholdDb: -50, minSilenceMs: 30_000, releaseMs: 2_000, yellowDelayMs: 2_000 });
+  let yellow = 0;
+  for (let t = 0; t < 120_000; t += 250) {
+    d.feed(speech(t), T0 + t);
+    if (d.snapshot(T0 + t).yellow) yellow++;
+  }
+  assert.equal(yellow, 0);
+});
+
+test('an alarm that is open ends when speech comes back, even with pauses between the words', () => {
+  const d = createDetector(cfg);
+  run(d, -20, 0, 1000);
+  run(d, -80, 1000, 20_000);
+  const ev = run(d, speech, 20_000, 30_000, 250);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'recovered');
+  assert.equal(ev[0].start, T0 + 1000);
+});
+
+test('a rare short noise is still not audio: the countdown goes on', () => {
+  const d = createDetector({ ...cfg, minSilenceMs: 30_000 });
+  const ev = run(d, (t) => (t % 3000 < 250 ? -20 : -80), 0, 40_000, 250); // 250 ms of noise every 3 s
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'alarm');
+});
+
+test('yellowDelayMs: the traffic light stays green until the silence has lasted that long; the alarm is unchanged', () => {
+  const d = createDetector({ ...cfg, yellowDelayMs: 2_000 });
+  run(d, -20, 0, 1000);
+  run(d, -80, 1000, 2800);
+  assert.equal(d.snapshot(T0 + 2800).status, 'counting');
+  assert.equal(d.snapshot(T0 + 2800).yellow, false);
+  run(d, -80, 2800, 3200);
+  assert.equal(d.snapshot(T0 + 3200).yellow, true);
+  const ev = run(d, -80, 3200, 20_000);
+  assert.equal(ev[0].type, 'alarm');
+  assert.equal(ev[0].at, T0 + 11_000);
+});
+
+test('yellowDelayMs 0 (the default of the detector) is yellow at once; a delay longer than the alarm time is capped', () => {
+  const d = createDetector(cfg);
+  run(d, -20, 0, 1000);
+  run(d, -80, 1000, 1400);
+  assert.equal(d.snapshot(T0 + 1200).yellow, true);
+  const e = createDetector({ ...cfg, yellowDelayMs: 60_000 });
+  run(e, -20, 0, 1000);
+  run(e, -80, 1000, 11_400);
+  assert.equal(e.snapshot(T0 + 11_200).status, 'alarm');
+  assert.equal(e.snapshot(T0 + 11_200).yellow, true);
+});
+
+test('blips are still reported for a drop shorter than the yellow delay', () => {
+  const d = createDetector({ ...cfg, yellowDelayMs: 2_000, blips: true });
+  run(d, -20, 0, 1000);
+  run(d, -80, 1000, 1600);
+  const ev = run(d, -20, 1600, 5000);
+  assert.equal(ev.length, 1);
+  assert.equal(ev[0].type, 'blip');
+});
+
+test('yellowDelayMs: an input that delivers no data is yellow at once (it is not the pause of a speaker)', () => {
+  const d = createDetector({ ...cfg, yellowDelayMs: 2_000 });
+  run(d, -20, 0, 1000);
+  d.feed(null, T0 + 1000, 'nodata');
+  assert.equal(d.snapshot(T0 + 1000).yellow, true);
+});
