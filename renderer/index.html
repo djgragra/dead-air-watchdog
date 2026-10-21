@@ -254,6 +254,17 @@
           <div class="field"><span data-i18n="set.tg.recipients">Recipients (chat IDs)</span><div id="tRecipients"></div>
             <button type="button" class="btn btn--small" id="tAdd" data-i18n="set.tg.add">Add recipient</button></div>
           <div class="row"><button type="button" class="btn btn--small" id="tTest" data-i18n="set.test">Send test</button><span class="testres" id="tRes" role="status"></span></div>
+
+          <h3 data-i18n="set.wh.title">HTTP (webhook)</h3>
+          <label class="check"><input type="checkbox" id="wEnable" /><span data-i18n="set.wh.enable">Send HTTP alerts</span></label>
+          <div class="cols">
+            <label class="field"><span data-i18n="set.wh.url">Address to call</span><input type="url" id="wUrl" spellcheck="false" autocomplete="off" placeholder="https://example.org/dead-air" /></label>
+            <label class="field"><span data-i18n="set.wh.method">Method</span><select id="wMethod"><option value="POST">POST (JSON)</option><option value="GET">GET</option></select></label>
+            <label class="field"><span data-i18n="set.wh.auth">Authorization header (optional)</span><input type="password" id="wAuth" spellcheck="false" autocomplete="new-password" placeholder="Bearer …" data-pw /></label>
+          </div>
+          <p class="hint" data-i18n="set.wh.hint"></p>
+          <p class="warn hidden" id="wBad" data-i18n="set.wh.bad"></p>
+          <div class="row"><button type="button" class="btn btn--small" id="wTest" data-i18n="set.test">Send test</button><span class="testres" id="wRes" role="status"></span></div>
         </fieldset>
 
         <fieldset class="card">

@@ -6,7 +6,8 @@
   'use strict';
   const api = window.engineApi;
   const RETRY_MS = [2000, 5000, 10000, 30000];
-  const STALL_MS = 3000;
+  const STALL_MS = 3000; // a stream that was playing and stops delivering data
+  const START_MS = 20000; // a stream that has not delivered its first audio yet (some servers need 5-10 s)
   const BATCH_MS = 100;
 
   let ctx = null;
@@ -110,13 +111,20 @@
     const fail = (reason) => () => { if (gen === p.gen) { disconnectAll(p); scheduleRetry(p, gen, reason); } };
     audio.onerror = fail('stream-error');
     audio.onended = fail('stream-ended');
-    audio.onstalled = () => { if (gen === p.gen) setFault(p, 'stream-stalled'); };
+    // Until the first audio arrives the stream is only "starting": the browser fires waiting/stalled all the
+    // time then (a 128 kbit/s server took 6.6 s, the old 3 s limit restarted it for ever). It gets START_MS;
+    // once it has played, a pause of STALL_MS means the stream stopped.
+    let started = false;
+    const begun = () => { started = true; };
+    p.stallTimer = setTimeout(() => { if (gen === p.gen && !started) { disconnectAll(p); scheduleRetry(p, gen, 'stream-nostart'); } }, START_MS);
+    audio.onstalled = () => { if (gen === p.gen && started) setFault(p, 'stream-stalled'); };
     audio.onwaiting = () => {
+      if (!started) return; // the start timer above covers this
       clearTimeout(p.stallTimer);
       p.stallTimer = setTimeout(() => { if (gen === p.gen) { disconnectAll(p); scheduleRetry(p, gen, 'stream-stalled'); } }, STALL_MS);
     };
     const recovered = () => { clearTimeout(p.stallTimer); if (gen === p.gen) setOk(p); };
-    audio.onplaying = recovered;
+    audio.onplaying = () => { begun(); recovered(); };
     // After a plain "stalled" (no "waiting") the browser does not fire "playing" again when the data
     // resumes, so the fault would stay for good while the meters move: playback time advancing again
     // is the proof that audio is back.
@@ -125,6 +133,7 @@
       const t = audio.currentTime;
       if (t !== lastTime) {
         lastTime = t;
+        if (!started && !audio.paused) { begun(); clearTimeout(p.stallTimer); }
         if (p.faulted && !audio.paused) recovered();
       }
     };

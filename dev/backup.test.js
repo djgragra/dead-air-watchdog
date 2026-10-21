@@ -159,9 +159,9 @@ test('import: hand-edited values are brought back inside the limits', () => {
   assert.equal(r.settings.inputs[0].thresholdDb, -10);
 });
 
-test('the one list of secrets covers email, Telegram, heartbeat and every stream address', () => {
+test('the one list of secrets covers email, Telegram, heartbeat, HTTP alerts and every stream address', () => {
   const s = base();
-  assert.deepEqual(secretSlots(s).map((x) => x.id), ['email.pass', 'telegram.botToken', 'heartbeat.url', 'input:a1', 'input:b2']);
+  assert.deepEqual(secretSlots(s).map((x) => x.id), ['email.pass', 'telegram.botToken', 'heartbeat.url', 'webhook.url', 'webhook.authHeader', 'input:a1', 'input:b2']);
   const sealed = mapSecrets(s, (v) => `enc:v1:${Buffer.from(v).toString('base64')}`);
   assert.ok(sealed.notifications.email.pass.startsWith('enc:v1:'));
   assert.ok(sealed.heartbeat.url.startsWith('enc:v1:'));

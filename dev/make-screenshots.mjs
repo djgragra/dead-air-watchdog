@@ -52,6 +52,7 @@ const settings = (theme) => ({
     desktop: true, reminderMin: 10, sound: { enabled: true, volume: 0.6 },
     email: { enabled: true, host: 'smtp.example.org', port: 587, secure: false, user: 'watchdog', pass: '', from: 'watchdog@example.org', recipients: ['engineer@example.org', 'duty.manager@example.org', 'oncall@example.org'] },
     telegram: { enabled: true, botToken: '', recipients: [{ chatId: '100200300', note: 'Engineer on duty' }, { chatId: '100200301', note: 'Station manager' }] },
+    webhook: { enabled: false, url: '', method: 'POST', authHeader: '' },
     updateAlert: true,
     grouping: { enabled: true, windowSec: 60, firstNow: true }
   },

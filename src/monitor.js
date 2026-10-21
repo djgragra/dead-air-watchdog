@@ -79,7 +79,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   const grouper = createGrouper({
     getConfig: () => settings().notifications.grouping,
     send: (m) => dispatch(m),
-    buildGroup: (kind, items) => ({ ...buildGroupAlert(settings().language, kind, items, { now: now(), host }), label: `group-${kind}:${items.length}` }),
+    buildGroup: (kind, items) => ({ ...buildGroupAlert(settings().language, kind, items, { now: now(), host }), label: `group-${kind}:${items.length}`, event: { kind, items } }),
     setTimer: (fn, ms) => {
       const h = setTimeoutFn(fn, ms);
       h?.unref?.(); // a waiting group never keeps the process alive
@@ -92,7 +92,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     const lang = settings().language;
     const name = inputLabel(lang, inp);
     const { subject, text } = buildAlert(lang, kind, alertData(inp, extra));
-    const single = { subject, text, label: `${kind}:${name}` };
+    const single = { subject, text, label: `${kind}:${name}`, event: { kind, items: [{ input: name, cause: extra.cause, start: extra.start, end: extra.end, durationMs: extra.durationMs }] } };
     if (kind === 'alarm' || kind === 'recovered') grouper.submit(kind, { input: name, cause: extra.cause, start: extra.start, end: extra.end, durationMs: extra.durationMs }, single);
     else dispatch(single);
   }
