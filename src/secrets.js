@@ -9,7 +9,9 @@ export const SEALED_PREFIX = 'enc:v1:';
 export const SECRET_PATHS = [
   { id: 'email.pass', path: ['notifications', 'email', 'pass'] },
   { id: 'telegram.botToken', path: ['notifications', 'telegram', 'botToken'] },
-  { id: 'heartbeat.url', path: ['heartbeat', 'url'] } // ping URLs usually carry a secret token
+  { id: 'heartbeat.url', path: ['heartbeat', 'url'] }, // ping URLs usually carry a secret token
+  { id: 'webhook.url', path: ['notifications', 'webhook', 'url'] }, // so do the addresses of HTTP alerts
+  { id: 'webhook.authHeader', path: ['notifications', 'webhook', 'authHeader'] }
 ];
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);

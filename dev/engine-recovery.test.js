@@ -88,9 +88,33 @@ test('time advancing without a fault sends nothing', async () => {
 test('waiting then playing still clears the fault', async () => {
   const { calls, audio, stop } = await load();
   try {
+  audio.onplaying(); // started
   audio.onstalled();
   audio.onwaiting();
   audio.onplaying();
   assert.equal(calls.filter((c) => c[0] === 'ok').length, 1);
+  } finally { await stop(); }
+});
+
+test('a stream that is slow to start is not given up at 3 s (Winchester 128k: first data after 6.6 s)', async () => {
+  const { calls, audio, stop } = await load();
+  try {
+  audio.onwaiting();
+  audio.onstalled();
+  await new Promise((r) => setTimeout(r, 3300)); // the old STALL_MS
+  assert.equal(calls.filter((c) => c[0] === 'fault').length, 0, 'no fault while the stream is still starting');
+  audio.onplaying();
+  audio.currentTime = 1; audio.ontimeupdate();
+  assert.equal(calls.filter((c) => c[0] === 'fault').length, 0);
+  } finally { await stop(); }
+});
+
+test('after it has played, a stall of 3 s still disconnects and reports the stream as stopped', async () => {
+  const { calls, audio, stop } = await load();
+  try {
+  audio.onplaying();
+  audio.onwaiting();
+  await new Promise((r) => setTimeout(r, 3300));
+  assert.deepEqual(calls.filter((c) => c[0] === 'fault'), [['fault', 'a', 'stream-stalled']]);
   } finally { await stop(); }
 });

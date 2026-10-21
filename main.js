@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createStore } from './src/store.js';
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
+import { sendWebhook } from './src/webhook.js';
 import { checkForUpdate, downloadInstaller, sweepPartials, bannerState, remindLaterState, skipVersionState, makeSafetyCopy, installPlan, whatsNew, startupKind } from './src/updater.js';
 import { createLogger } from './src/logs.js';
 import { buildSupportInfo } from './src/support.js';
@@ -573,6 +574,11 @@ function registerIpc() {
     const l = lang();
     try {
       if (channel === 'email') await sendEmail({ ...cfg, enabled: true }, t(l, 'test.subject'), t(l, 'test.body'), l);
+      else if (channel === 'webhook') {
+        const st = store.getSettings();
+        const now = Date.now();
+        await sendWebhook({ ...cfg, enabled: true }, { event: { kind: 'test', items: [{ input: 'Test', cause: 'silence', start: now - 45_000, end: null, durationMs: 45_000 }] }, subject: t(l, 'test.subject'), text: t(l, 'test.body'), installation: installationName(st, os.hostname()), host: os.hostname(), version: app.getVersion(), now }, l, (u, o) => net.fetch(u, o));
+      }
       else await sendTelegram({ ...cfg, enabled: true }, t(l, 'test.body'), l, (u, o) => net.fetch(u, o));
       return { ok: true };
     } catch (err) {
@@ -751,6 +757,7 @@ app.whenReady().then(() => {
   dispatcher = createDispatcher({
     getSettings: () => store.getSettings(),
     host: os.hostname(),
+    version: app.getVersion(),
     onResult: (r) => {
       if (r.ok) deliveryFaults.delete(r.channel);
       else deliveryFaults.set(r.channel, { error: r.error, giveUp: !!r.giveUp, label: r.label, at: Date.now() });

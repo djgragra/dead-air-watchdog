@@ -16,7 +16,7 @@ const SVG = 'http://www.w3.org/2000/svg';
 const METER_MIN = -80;
 const METER_MAX = 0;
 const MAX_INPUTS = 32;
-const FAULTS = ['device-ended', 'stream-error', 'stream-ended', 'stream-stalled', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
+const FAULTS = ['device-ended', 'stream-error', 'stream-ended', 'stream-stalled', 'stream-nostart', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
 
 let settings = null;
 let status = { running: false, overall: 'idle', counts: {}, inputs: [] };
@@ -1259,6 +1259,12 @@ function fillForm() {
   const tg = s.notifications.telegram;
   $('tEnable').checked = tg.enabled;
   $('tToken').value = tg.botToken;
+  const wh = s.notifications.webhook;
+  $('wEnable').checked = wh.enabled;
+  $('wUrl').value = wh.url;
+  $('wMethod').value = wh.method;
+  $('wAuth').value = wh.authHeader;
+  $('wBad').classList.add('hidden');
   renderRecipients(tg.recipients);
   $('gBoot').checked = s.general.startOnBoot;
   $('gMin').checked = s.general.startMinimized;
@@ -1298,6 +1304,7 @@ function readForm() {
       sound: { enabled: $('nSound').checked, volume: (Number($('nVol').value) || 60) / 100 },
       email: { enabled: $('mEnable').checked, host: $('mHost').value.trim(), port: Number($('mPort').value) || 587, secure: $('mSecure').checked, user: $('mUser').value.trim(), pass: $('mPass').value, from: $('mFrom').value.trim(), recipients: parseAddresses($('mTo').value).valid },
       telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients },
+      webhook: { enabled: $('wEnable').checked, url: $('wUrl').value.trim(), method: $('wMethod').value, authHeader: $('wAuth').value.trim() },
       updateAlert: $('uAlert').checked,
       grouping: { enabled: $('grEnable').checked, windowSec: Number($('grWindow').value) || 60, firstNow: $('grFirst').checked }
     },
@@ -1344,11 +1351,14 @@ async function saveForm(e) {
   const hbBad = patch.heartbeat.enabled && !validUrl(patch.heartbeat.url);
   $('hBad').classList.toggle('hidden', !hbBad);
   markInvalid($('hUrl'), hbBad);
-  if (bad || hbBad) {
+  const whBad = patch.notifications.webhook.enabled && !validUrl(patch.notifications.webhook.url);
+  $('wBad').classList.toggle('hidden', !whBad);
+  markInvalid($('wUrl'), whBad);
+  if (bad || hbBad || whBad) {
     const st = $('saveState');
     st.textContent = t('set.notSaved');
     st.classList.add('is-dirty');
-    const first = hbBad && !bad ? $('hUrl') : $('inputsList').querySelector('.in-url.is-invalid');
+    const first = bad ? $('inputsList').querySelector('.in-url.is-invalid') : hbBad ? $('hUrl') : $('wUrl');
     first?.scrollIntoView({ block: 'center' });
     first?.focus({ preventScroll: true });
     return;
@@ -1419,10 +1429,16 @@ function askMic() {
 async function testChannel(channel) {
   if (channel === 'email') normaliseRecipients();
   const form = readForm();
-  const out = $(channel === 'email' ? 'mRes' : 'tRes');
+  const out = $({ email: 'mRes', telegram: 'tRes', webhook: 'wRes' }[channel]);
   out.className = 'testres';
   out.textContent = t('set.test.sending');
-  const cfg = channel === 'email' ? form.notifications.email : form.notifications.telegram;
+  const cfg = form.notifications[channel];
+  if (channel === 'webhook' && !validUrl(cfg.url)) {
+    $('wBad').classList.remove('hidden');
+    out.textContent = '';
+    return;
+  }
+  $('wBad').classList.add('hidden');
   const r = await api.notifications.test(channel, cfg);
   // The test uses what is on the screen; alerts use what is saved and only when the channel is switched on.
   const notes = [];
@@ -1901,6 +1917,7 @@ function wire() {
   $('bkImport').addEventListener('click', importBackup);
   $('mTest').addEventListener('click', () => testChannel('email'));
   $('tTest').addEventListener('click', () => testChannel('telegram'));
+  $('wTest').addEventListener('click', () => testChannel('webhook'));
 
   $('updCheck').addEventListener('click', checkUpdates);
   $('helpCopy').addEventListener('click', copySupport);

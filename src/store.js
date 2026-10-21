@@ -46,6 +46,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     sound: { enabled: false, volume: 0.6 }, // audible alarm on this computer while dead air lasts
     email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: [] }, // recipients: [address], all sent in Bcc
     telegram: { enabled: false, botToken: '', recipients: [] }, // recipients: [{ chatId, note }]
+    webhook: { enabled: false, url: '', method: 'POST', authHeader: '' }, // one HTTP request per alert (src/webhook.js); url and authHeader are secrets
     updateAlert: true, // tell by email / Telegram, once per version, that a new version is out
     grouping: { enabled: true, windowSec: 60, firstNow: true } // several inputs failing (or coming back) together: one message with the list
   },
@@ -158,6 +159,11 @@ export function sanitizeSettings(s) {
     .map((r) => ({ chatId: String(r?.chatId ?? '').trim(), note: String(r?.note ?? '').trim().slice(0, 80) }))
     .filter((r) => r.chatId)
     .slice(0, 20);
+  const wh = out.notifications.webhook;
+  wh.enabled = !!wh.enabled;
+  wh.url = String(wh.url || '').trim().slice(0, 2000);
+  wh.method = wh.method === 'GET' ? 'GET' : 'POST';
+  wh.authHeader = String(wh.authHeader || '').trim().slice(0, 500);
   const gr = out.notifications.grouping;
   gr.enabled = gr.enabled !== false;
   gr.windowSec = Math.round(clamp(gr.windowSec, 10, 600, 60));

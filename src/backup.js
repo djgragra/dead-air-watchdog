@@ -47,6 +47,8 @@ export function missingSecrets(settings, emptied = [], { onlyInputIds = null } =
   const tg = settings.notifications?.telegram || {};
   if ((tg.enabled || (tg.recipients || []).length) && !tg.botToken) out.push({ id: 'telegram.botToken', kind: 'telegram.botToken' });
   if (settings.heartbeat?.enabled && !settings.heartbeat.url) out.push({ id: 'heartbeat.url', kind: 'heartbeat.url' });
+  const wh = settings.notifications?.webhook || {};
+  if (wh.enabled && !wh.url) out.push({ id: 'webhook.url', kind: 'webhook.url' });
   for (const i of settings.inputs || []) {
     if (onlyInputIds && !onlyInputIds.has(i.id)) continue;
     if (emptied.includes(`input:${i.id}`) && !hasUserInfo(i.streamUrl)) out.push({ id: `input:${i.id}`, kind: 'input', name: inputName(i) });
@@ -89,6 +91,10 @@ export function prepareImport(raw, current, { mode = 'replace' } = {}) {
   if (!e.pass && ce.pass && e.host && e.host.toLowerCase() === ce.host.toLowerCase() && e.user === ce.user) e.pass = ce.pass;
   if (!incoming.notifications.telegram.botToken) incoming.notifications.telegram.botToken = current.notifications.telegram.botToken;
   if (!incoming.heartbeat.url) incoming.heartbeat.url = current.heartbeat.url;
+  if (!incoming.notifications.webhook.url) {
+    incoming.notifications.webhook.url = current.notifications.webhook.url;
+    if (!incoming.notifications.webhook.authHeader) incoming.notifications.webhook.authHeader = current.notifications.webhook.authHeader;
+  }
   for (const i of incoming.inputs) {
     const c = current.inputs.find((x) => x.id === i.id);
     if (c && !hasUserInfo(i.streamUrl) && hasUserInfo(c.streamUrl) && withoutUserInfo(c.streamUrl) === i.streamUrl) i.streamUrl = c.streamUrl;

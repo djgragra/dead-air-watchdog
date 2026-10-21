@@ -111,3 +111,15 @@ test('logo transparency: a logo with a transparent edge needs no box, one that f
   assert.equal(hasTransparentEdge(make(64, 64, border), 64, 64), false);
   assert.equal(hasTransparentEdge(new Uint8ClampedArray(4), 64, 64), false, 'bad input');
 });
+
+test('macOS: the ad-hoc signature hook is wired into the build and only acts on a Mac app', async () => {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.build.afterPack, 'dev/sign-adhoc.cjs');
+  assert.ok(fs.existsSync(path.join(root, pkg.build.afterPack)));
+  const { createRequire } = await import('node:module');
+  const hook = createRequire(import.meta.url)('./sign-adhoc.cjs').default;
+  assert.equal(await hook({ electronPlatformName: 'win32' }), undefined); // nothing on Windows
+  assert.equal(await hook({ electronPlatformName: 'linux' }), undefined);
+  const wf = fs.readFileSync(path.join(root, '.github/workflows/build-installers.yml'), 'utf8');
+  assert.match(wf, /codesign --verify --deep --strict/, 'the workflow checks the apps inside the disk images');
+});

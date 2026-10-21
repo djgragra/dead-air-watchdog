@@ -1,7 +1,8 @@
 // Alert delivery: email (SMTP via nodemailer) and Telegram (Bot API), with retry.
 // Credentials come from the user's settings only; nothing is hard-coded.
-import { t, alertPrefix, withPrefix, hasPrefix } from './messages.js';
+import { t, alertPrefix, withPrefix, hasPrefix, installationName } from './messages.js';
 import { parseAddresses } from './addresses.js';
+import { sendWebhook } from './webhook.js';
 
 const TG_PREFIX = '[Dead Air Watchdog]';
 
@@ -68,21 +69,23 @@ export async function sendTelegram(cfg, text, lang = 'en', fetchFn = globalThis.
 // Sends one message on every enabled channel and retries the channels that failed.
 // During an outage the network is often down too, so a failed alert is retried with growing
 // pauses (30 s, 1 min, then every 2 min) for up to `maxAgeMs`; each channel stops when delivered.
-export function createDispatcher({ getSettings, host = '', log = () => {}, onResult = () => {}, delays = [30_000, 60_000, 120_000], maxAgeMs = 30 * 60_000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, deps = {} }) {
+export function createDispatcher({ getSettings, host = '', version = '', log = () => {}, onResult = () => {}, delays = [30_000, 60_000, 120_000], maxAgeMs = 30 * 60_000, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, deps = {} }) {
   const mail = deps.sendEmail || sendEmail;
   const tg = deps.sendTelegram || sendTelegram;
+  const wh = deps.sendWebhook || sendWebhook;
   const pending = new Set();
 
-  function dispatch({ subject, text, label }) {
+  function dispatch({ subject, text, label, event }) {
     const lang = getSettings().language;
     const prefix = alertPrefix(getSettings(), host); // [Dead Air Watchdog · installation name]
     subject = withPrefix(subject, prefix);
     const started = now();
-    const state = { email: 'todo', telegram: 'todo' };
+    const state = { email: 'todo', telegram: 'todo', webhook: 'todo' };
     const errors = {};
     const channels = [
       ['email', (s) => mail(s.notifications.email, subject, text, lang)],
-      ['telegram', (s) => tg(s.notifications.telegram, text, lang, undefined, prefix)]
+      ['telegram', (s) => tg(s.notifications.telegram, text, lang, undefined, prefix)],
+      ['webhook', (s) => wh(s.notifications.webhook, { event, subject, text, installation: installationName(s, host), host, version, now: now() }, lang)]
     ];
 
     return new Promise((resolve) => {
