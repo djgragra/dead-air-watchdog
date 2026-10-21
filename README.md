@@ -62,7 +62,7 @@ Invented data only (no real streams, names or addresses). Taken with Chromium on
 
 Download the installer for your system from the [Releases](https://github.com/djgragra/dead-air-watchdog/releases) page and verify it against `SHA256SUMS.txt`. The app is free and **not code-signed**:
 
-- **macOS**: the app is signed ad hoc (no Apple account), so the first start shows "unidentified developer": open *System Settings → Privacy & Security* and click *Open Anyway*. From 26.10.9 on, an Apple Silicon Mac no longer says "damaged". If an earlier version says so, run `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`.
+- **macOS**: the app is signed ad hoc (no Apple account), so the first start says "unidentified developer": open *System Settings → Privacy & Security*, scroll down and click *Open Anyway* (tested on an Apple Silicon Mac from 26.10.9; earlier versions said "damaged"). **Second method**, in Terminal: `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"` (it also opens an earlier version that says "damaged"; change the name to open another OnAir Garage app).
 - **Windows**: if SmartScreen appears, click *More info* → *Run anyway*.
 - **Linux**: `chmod +x Dead-Air-Watchdog-*.AppImage`, then run it.
 
