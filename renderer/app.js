@@ -354,7 +354,8 @@ function renderTiles() {
       else tile.root.style.removeProperty('--tile-logo');
     }
     const devName = inp.type === 'device' ? settings.inputs.find((i) => i.id === inp.id)?.deviceLabel : '';
-    tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream') + (devName ? ` · ${devName}` : '');
+    tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream');
+    tile.type.title = devName || ''; // the device name is a tooltip: a long name in the line pushed the name of the input out of the tile
     tile.state.textContent = t(`st.${inp.state}`);
     const paused = inp.state === 'paused';
     tile.pause.title = t('pause.btn');
