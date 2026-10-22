@@ -31,7 +31,7 @@ export const DEFAULT_INPUT = Object.freeze({
 export const DEFAULT_SETTINGS = Object.freeze({
   language: 'en', // 'en' | 'it' | 'es' — the app always starts in English until the user changes it
   theme: 'dark', // 'dark' | 'light' | 'auto'
-  inputs: [], // see DEFAULT_INPUT: at most one sound card and any number of streams (MAX_INPUTS in total)
+  inputs: [], // see DEFAULT_INPUT: any mix of sound cards (several, or several pairs of one) and streams, MAX_INPUTS in total
   installationName: '', // shown in alerts as [Dead Air Watchdog · name]; empty = the computer name
   display: {
     edgeGlow: 'wall', // screen-edge glow: 'wall' (only in wall display) | 'always' | 'off'
@@ -95,11 +95,10 @@ function migrateLegacy(raw) {
   return { ...rest, inputs: configured ? [{ ...input, thresholdDb: detection?.thresholdDb, minSilenceSec: detection?.minSilenceSec }] : [] };
 }
 
-function sanitizeInput(raw, usedIds, hasDevice) {
+function sanitizeInput(raw, usedIds) {
   const d = DEFAULT_INPUT;
   const i = { ...d, ...(isObj(raw) ? raw : {}) };
   i.type = i.type === 'device' ? 'device' : 'stream';
-  if (i.type === 'device' && hasDevice) return null; // only one sound card
   let id = String(i.id || '');
   if (!/^[\w-]{1,64}$/.test(id) || usedIds.has(id)) id = randomUUID();
   usedIds.add(id);
@@ -147,15 +146,7 @@ export function sanitizeSettings(s) {
   if (!['max', 'large', 'normal'].includes(out.display.wallClock)) out.display.wallClock = d.display.wallClock;
   out.installationName = String(out.installationName || '').trim().slice(0, 60);
   const used = new Set();
-  let hasDevice = false;
-  out.inputs = (Array.isArray(out.inputs) ? out.inputs : [])
-    .slice(0, MAX_INPUTS)
-    .map((raw) => {
-      const i = sanitizeInput(raw, used, hasDevice);
-      if (i?.type === 'device') hasDevice = true;
-      return i;
-    })
-    .filter(Boolean);
+  out.inputs = (Array.isArray(out.inputs) ? out.inputs : []).slice(0, MAX_INPUTS).map((raw) => sanitizeInput(raw, used));
   out.notifications.reminderMin = Math.round(clamp(out.notifications.reminderMin, 0, 1440, 0));
   out.notifications.sound.enabled = !!out.notifications.sound.enabled;
   out.notifications.sound.volume = Math.round(clamp(out.notifications.sound.volume, 0.05, 1, 0.6) * 100) / 100;

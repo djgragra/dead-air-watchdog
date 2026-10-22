@@ -62,3 +62,16 @@ test('engine windows: moving an input changes its window only when it crosses a 
   [swapped[0], swapped[1]] = [swapped[1], swapped[0]];
   assert.deepEqual(where(swapped), before); // same window for all: nothing reopens
 });
+
+test('engine windows: several sound cards all go to the first window and take no stream slot; 32 mixed inputs fit', () => {
+  const cards = Array.from({ length: 8 }, (_, i) => ({ id: 'd' + i, type: 'device', deviceId: 'usb-' + i }));
+  const shards = shardInputs([...cards, ...['a', 'b', 'c', 'd', 'e', 'f'].map(stream)]);
+  assert.equal(shards.length, 1, 'six streams still fit with eight cards');
+  assert.equal(shards[0].length, 14);
+  const mixed = Array.from({ length: 32 }, (_, i) => (i % 2 ? stream('s' + i) : { id: 'd' + i, type: 'device', deviceId: 'usb-' + i }));
+  const all = shardInputs(mixed);
+  assert.equal(all.flat().length, 32);
+  assert.equal(new Set(all.flat().map((i) => i.id)).size, 32);
+  assert.ok(all.every((s) => s.filter((i) => i.type === 'stream').length <= STREAMS_PER_ENGINE));
+  assert.equal(all[0].filter((i) => i.type === 'device').length, 16, 'every card in the window that owns the microphone permission');
+});

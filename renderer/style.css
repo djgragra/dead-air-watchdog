@@ -356,7 +356,9 @@ dialog p { margin: 8px 0; color: var(--dim); }
 .input > summary::before { content: "▸"; color: var(--dim); }
 .input[open] > summary::before { content: "▾"; }
 .input__title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.input__kind { margin-left: auto; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+.input__live { margin-left: auto; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--dim); min-width: 64px; text-align: right; }
+.input__live.is-active { color: var(--ok); }
+.input__kind { margin-left: 12px; font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
 .input__body { padding: 4px 14px 12px; border-top: 1px solid var(--border); }
 .input__foot { display: flex; justify-content: flex-end; margin-top: 8px; }
 .input__move { display: inline-flex; gap: 4px; margin-left: 8px; }
