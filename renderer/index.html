@@ -277,6 +277,16 @@
           <p class="hint" data-i18n="set.grp.hint"></p>
         </fieldset>
 
+        <fieldset class="card" id="tplCard">
+          <legend data-i18n="set.tpl.title">Wording of the alerts</legend>
+          <p class="hint" data-i18n="set.tpl.hint"></p>
+          <label class="field"><span data-i18n="set.tpl.kind">Message</span><select id="tplKind"></select></label>
+          <label class="field"><span data-i18n="set.tpl.subject">Subject (email)</span><input type="text" id="tplSubject" maxlength="200" spellcheck="true" autocomplete="off" /></label>
+          <label class="field"><span data-i18n="set.tpl.body">Text</span><textarea id="tplBody" rows="7" maxlength="4000" spellcheck="true"></textarea></label>
+          <p class="hint" id="tplVars"></p>
+          <div class="row"><button type="button" class="btn btn--small" id="tplDefault" data-i18n="set.tpl.default">Back to the text of the app</button></div>
+        </fieldset>
+
         <fieldset class="card">
           <legend data-i18n="set.hb.title">Heartbeat (external check)</legend>
           <label class="check"><input type="checkbox" id="hEnable" /><span data-i18n="set.hb.enable">Send a periodic request while monitoring</span></label>

@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mapSecrets } from './secrets.js';
 import { parseAddresses } from './addresses.js';
+import { TEMPLATE_KINDS, TEMPLATE_LIMITS } from './messages.js';
 import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 
 export const MAX_INPUTS = 32;
@@ -47,6 +48,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: [] }, // recipients: [address], all sent in Bcc
     telegram: { enabled: false, botToken: '', recipients: [] }, // recipients: [{ chatId, note }]
     webhook: { enabled: false, url: '', method: 'POST', authHeader: '' }, // one HTTP request per alert (src/webhook.js); url and authHeader are secrets
+    templates: {}, // wording of the alerts chosen by the user: { alarm|frozen|reminder|recovered|groupAlarm|groupRecovered: { subject, body } }; empty = the text of the app
     updateAlert: true, // tell by email / Telegram, once per version, that a new version is out
     grouping: { enabled: true, windowSec: 60, firstNow: true } // several inputs failing (or coming back) together: one message with the list
   },
@@ -118,6 +120,19 @@ function sanitizeInput(raw, usedIds, hasDevice) {
   return Object.fromEntries(Object.keys(d).map((k) => [k, i[k]]));
 }
 
+function sanitizeTemplates(raw) {
+  const out = {};
+  if (!isObj(raw)) return out;
+  for (const kind of TEMPLATE_KINDS) {
+    const t = raw[kind];
+    if (!isObj(t)) continue;
+    const subject = String(t.subject ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, TEMPLATE_LIMITS.subject); // a subject is one line
+    const body = String(t.body ?? '').replace(/\r\n?/g, '\n').trim().slice(0, TEMPLATE_LIMITS.body);
+    if (subject || body) out[kind] = { subject, body };
+  }
+  return out;
+}
+
 // Keeps stored values inside what the rest of the app can handle (also for hand-edited files).
 export function sanitizeSettings(s) {
   const d = DEFAULT_SETTINGS;
@@ -168,6 +183,7 @@ export function sanitizeSettings(s) {
   gr.enabled = gr.enabled !== false;
   gr.windowSec = Math.round(clamp(gr.windowSec, 10, 600, 60));
   gr.firstNow = gr.firstNow !== false;
+  out.notifications.templates = sanitizeTemplates(out.notifications.templates);
   out.general.retentionDays = Math.round(clamp(out.general.retentionDays, 30, 3650, 365));
   out.general.microRetentionDays = Math.round(clamp(out.general.microRetentionDays, 1, 365, 30));
   const us = isObj(out.updateState) ? out.updateState : {};

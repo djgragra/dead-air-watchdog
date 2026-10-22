@@ -2,6 +2,7 @@
 // it talks to the main process through window.api (see preload.cjs).
 // © 2026 Graziano Melzi · OnAir Garage — MIT License
 import { LANGS, makeT, tipUrl } from './i18n.js';
+import { TEMPLATE_KINDS, TEMPLATE_VARS } from '../src/messages.js';
 import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
 import { wallGrid } from '../src/core/wall-grid.js';
@@ -464,6 +465,19 @@ function onLevels(batch) {
 }
 
 // ---- wall display ----------------------------------------------------------------------------
+// The Save bar of Settings sticks under the top bar (which can wrap onto more lines), not behind it.
+function trackTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  const apply = () => {
+    const h = getComputedStyle(bar).position === 'sticky' ? bar.offsetHeight : 0; // on a narrow window the top bar scrolls away
+    document.documentElement.style.setProperty('--topbar-h', `${h}px`);
+  };
+  apply();
+  if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(bar);
+  window.addEventListener('resize', apply);
+}
+
 async function setWall(on, tell = true) {
   wall = on;
   document.body.classList.toggle('wall', on);
@@ -1275,6 +1289,7 @@ function fillForm() {
   $('gMicro').value = s.general.microRetentionDays;
   $('gInst').value = s.installationName;
   $('gInst').placeholder = info.host || '';
+  fillTemplates(s.notifications.templates);
   $('grEnable').checked = s.notifications.grouping.enabled;
   $('grWindow').value = s.notifications.grouping.windowSec;
   $('grFirst').checked = s.notifications.grouping.firstNow;
@@ -1287,6 +1302,30 @@ function fillForm() {
   syncDisplayFields();
   resetEyes();
   setDirty(false);
+}
+
+// ---- wording of the alerts (Settings → Alerts) ---------------------------------------------------------
+let tplDraft = {}; // { kind: { subject, body } } as edited, saved with the form
+const tplIsGroup = (k) => k.startsWith('group');
+function fillTemplates(templates) {
+  tplDraft = {};
+  for (const k of TEMPLATE_KINDS) tplDraft[k] = { subject: templates?.[k]?.subject || '', body: templates?.[k]?.body || '' };
+  const sel = $('tplKind');
+  const keep = sel.value || TEMPLATE_KINDS[0];
+  sel.replaceChildren(...TEMPLATE_KINDS.map((k) => new Option(t(`set.tpl.kind.${k}`), k)));
+  sel.value = keep;
+  showTemplate();
+}
+function showTemplate() {
+  const k = $('tplKind').value;
+  $('tplSubject').value = tplDraft[k].subject;
+  $('tplBody').value = tplDraft[k].body;
+  const vars = (tplIsGroup(k) ? TEMPLATE_VARS.group : TEMPLATE_VARS.single).map((v) => `{${v}}`).join('  ');
+  $('tplVars').textContent = `${t('set.tpl.vars')} ${vars}`;
+}
+function editTemplate() {
+  const k = $('tplKind').value;
+  tplDraft[k] = { subject: $('tplSubject').value, body: $('tplBody').value };
 }
 
 const syncDisplayFields = () => $('dLogoOpField').classList.toggle('hidden', $('dLogo').value !== 'faded');
@@ -1306,6 +1345,7 @@ function readForm() {
       telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients },
       webhook: { enabled: $('wEnable').checked, url: $('wUrl').value.trim(), method: $('wMethod').value, authHeader: $('wAuth').value.trim() },
       updateAlert: $('uAlert').checked,
+      templates: tplDraft,
       grouping: { enabled: $('grEnable').checked, windowSec: Number($('grWindow').value) || 60, firstNow: $('grFirst').checked }
     },
     installationName: $('gInst').value.trim(),
@@ -1869,12 +1909,20 @@ function wire() {
   form.addEventListener('submit', saveForm);
   form.addEventListener('input', (e) => {
     if (e.target.closest('#bkCard')) return; // the backup box is not a setting
+    if (e.target.id === 'tplSubject' || e.target.id === 'tplBody') editTemplate();
     onInputsEvent(e);
     setDirty(true);
   });
   form.addEventListener('change', (e) => {
     if (e.target.closest('#bkCard')) return;
+    if (e.target.id === 'tplKind') return showTemplate(); // choosing which message to edit is not a change of the settings
     onInputsEvent(e);
+    setDirty(true);
+  });
+  $('tplDefault').addEventListener('click', () => {
+    $('tplSubject').value = '';
+    $('tplBody').value = '';
+    editTemplate();
     setDirty(true);
   });
   $('mTo').addEventListener('change', normaliseRecipients);
@@ -1941,6 +1989,7 @@ function wire() {
   });
   api.on.levels(onLevels);
   api.on.wallExit(() => setWall(false, false));
+  trackTopbarHeight();
   api.on.eventsChanged(() => {
     refreshEvents();
     refreshStats();

@@ -8,7 +8,7 @@ import { createStore } from './src/store.js';
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
 import { sendWebhook } from './src/webhook.js';
-import { checkForUpdate, downloadInstaller, sweepPartials, bannerState, remindLaterState, skipVersionState, makeSafetyCopy, installPlan, whatsNew, startupKind } from './src/updater.js';
+import { checkForUpdate, pageUrl, downloadInstaller, sweepPartials, bannerState, remindLaterState, skipVersionState, makeSafetyCopy, installPlan, whatsNew, startupKind } from './src/updater.js';
 import { createLogger } from './src/logs.js';
 import { buildSupportInfo } from './src/support.js';
 import { createAlertState } from './src/alert-state.js';
@@ -229,6 +229,18 @@ const rememberWindowSoon = () => {
   boundsTimer = setTimeout(rememberWindow, 600);
 };
 
+// Full screen reached two ways (F11 of the default menu, then the wall display) can leave the menu bar hidden on Windows.
+function restoreMenuBar() {
+  if (process.platform === 'darwin') return;
+  const show = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFullScreen()) return;
+    mainWindow.setAutoHideMenuBar(false);
+    mainWindow.setMenuBarVisibility(true);
+  };
+  show();
+  setTimeout(show, 150); // once the window has finished leaving full screen
+}
+
 function createWindow() {
   const settings = store.getSettings();
   mainWindow = new BrowserWindow({
@@ -259,6 +271,7 @@ function createWindow() {
       powerSaveBlocker.stop(wallBlockerId);
       wallBlockerId = null;
     }
+    restoreMenuBar();
     sendUi('event:wall-exit');
   });
   mainWindow.on('close', (e) => {
@@ -651,7 +664,7 @@ function registerIpc() {
     if (downloadedFile && fs.existsSync(downloadedFile)) shell.showItemInFolder(downloadedFile);
   });
   handle('update:open-page', () => {
-    if (updateInfo?.url) shell.openExternal(updateInfo.url);
+    if (updateInfo?.url) shell.openExternal(pageUrl(undefined, lang()));
   });
   // after a start of a newer version: the window with what changed, once
   handle('whatsnew:get', () => {

@@ -3,6 +3,7 @@
 // A channel is marked as told only after the message was delivered; a failed send is tried again
 // at the next check (every 24 hours) or as soon as the settings change.
 import { t } from './messages.js';
+import { pageUrl } from './updater.js';
 
 export function createUpdateNotice({ getSettings, alertState, send, notifyDesktop = () => {}, log = () => {}, delays = [0, 10_000, 60_000], sleep = (ms) => new Promise((r) => setTimeout(r, ms)) }) {
   const busy = new Set();
@@ -21,7 +22,7 @@ export function createUpdateNotice({ getSettings, alertState, send, notifyDeskto
     throw last;
   }
 
-  // info: { available, latest, current, url } as returned by checkForUpdate
+  // info: { available, latest, current } as returned by checkForUpdate
   async function announce(info) {
     if (!info?.available || !info.latest) return;
     const s = getSettings();
@@ -30,7 +31,7 @@ export function createUpdateNotice({ getSettings, alertState, send, notifyDeskto
     const channels = ['telegram', 'email'].filter((c) => n[c]?.enabled);
     if (!channels.length) return;
     const lang = s.language;
-    const vars = { latest: info.latest, current: info.current, url: info.url || '' };
+    const vars = { latest: info.latest, current: info.current, url: pageUrl(undefined, lang) }; // the page of the app on the site, not the GitHub release
     const subject = t(lang, 'update.subject', vars);
     const text = t(lang, 'update.body', vars);
 
