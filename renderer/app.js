@@ -2,6 +2,7 @@
 // it talks to the main process through window.api (see preload.cjs).
 // © 2026 Graziano Melzi · OnAir Garage — MIT License
 import { LANGS, makeT, tipUrl } from './i18n.js';
+import { TEMPLATE_KINDS, TEMPLATE_VARS } from '../src/messages.js';
 import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
 import { wallGrid } from '../src/core/wall-grid.js';
@@ -352,7 +353,9 @@ function renderTiles() {
       if (logoSrc) tile.root.style.setProperty('--tile-logo', `url("${logoSrc}")`);
       else tile.root.style.removeProperty('--tile-logo');
     }
+    const devName = inp.type === 'device' ? settings.inputs.find((i) => i.id === inp.id)?.deviceLabel : '';
     tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream');
+    tile.type.title = devName || ''; // the device name is a tooltip: a long name in the line pushed the name of the input out of the tile
     tile.state.textContent = t(`st.${inp.state}`);
     const paused = inp.state === 'paused';
     tile.pause.title = t('pause.btn');
@@ -444,6 +447,17 @@ function openPauseMenu(inputId, anchor, ev) {
 function onLevels(batch) {
   if (!status.running) return;
   const now = performance.now();
+  // In Settings each input shows its level, so that "which card is which" can be found by playing something into one.
+  if (!$('view-settings').classList.contains('hidden')) {
+    for (const [id, lv] of Object.entries(batch)) {
+      const live = $('inputsList').querySelector(`.input__live[data-live="${CSS.escape(id)}"]`);
+      const db = Math.max(lv.rms[0] ?? -Infinity, lv.rms[1] ?? -Infinity);
+      if (live) {
+        live.textContent = Number.isFinite(db) ? `${formatDb(db)} dB` : '';
+        live.classList.toggle('is-active', db > -60);
+      }
+    }
+  }
   for (const [id, lv] of Object.entries(batch)) {
     const tile = tiles.get(id);
     const inp = status.inputs.find((i) => i.id === id);
@@ -464,6 +478,19 @@ function onLevels(batch) {
 }
 
 // ---- wall display ----------------------------------------------------------------------------
+// The Save bar of Settings sticks under the top bar (which can wrap onto more lines), not behind it.
+function trackTopbarHeight() {
+  const bar = document.querySelector('.topbar');
+  if (!bar) return;
+  const apply = () => {
+    const h = getComputedStyle(bar).position === 'sticky' ? bar.offsetHeight : 0; // on a narrow window the top bar scrolls away
+    document.documentElement.style.setProperty('--topbar-h', `${h}px`);
+  };
+  apply();
+  if (typeof ResizeObserver === 'function') new ResizeObserver(apply).observe(bar);
+  window.addEventListener('resize', apply);
+}
+
 async function setWall(on, tell = true) {
   wall = on;
   document.body.classList.toggle('wall', on);
@@ -742,15 +769,56 @@ function setDirty(v) {
 
 const validUrl = (u) => /^https?:\/\/[^\s/$.?#][^\s]*$/i.test(u);
 
-function fillDeviceSelect(sel, selectedId, selectedLabel) {
-  sel.replaceChildren(new Option(t('set.dev.default'), ''));
-  for (const d of devices) {
-    // "default" and "communications" are virtual entries some systems add for the same device
-    if (d.deviceId === 'default' || d.deviceId === 'communications') continue;
-    sel.appendChild(new Option(d.label || d.deviceId.slice(0, 8), d.deviceId));
+// Names of the devices as shown: two devices with the same name (two identical USB cards) get a number, in the
+// order the system lists them, so they can be told apart. The real identity is always the device id.
+function deviceNames() {
+  const real = devices.filter((d) => d.deviceId !== 'default' && d.deviceId !== 'communications');
+  const total = new Map();
+  for (const d of real) total.set(d.label, (total.get(d.label) || 0) + 1);
+  const seen = new Map();
+  const names = new Map();
+  for (const d of real) {
+    const base = d.label || d.deviceId.slice(0, 8);
+    const n = (seen.get(d.label) || 0) + 1;
+    seen.set(d.label, n);
+    names.set(d.deviceId, total.get(d.label) > 1 ? `${base} (${n})` : base);
   }
-  if (selectedId && ![...sel.options].some((o) => o.value === selectedId)) sel.appendChild(new Option(selectedLabel || selectedId.slice(0, 8), selectedId));
+  return names;
+}
+const optionName = (o) => o?.dataset.base || o?.textContent || '';
+
+function fillDeviceSelect(sel, selectedId, selectedLabel) {
+  const none = new Option(t('set.dev.default'), '');
+  none.dataset.base = none.textContent;
+  sel.replaceChildren(none);
+  for (const [id, name] of deviceNames()) {
+    const o = new Option(name, id);
+    o.dataset.base = name;
+    sel.appendChild(o);
+  }
+  if (selectedId && ![...sel.options].some((o) => o.value === selectedId)) {
+    const o = new Option(selectedLabel || selectedId.slice(0, 8), selectedId);
+    o.dataset.base = selectedLabel || selectedId.slice(0, 8);
+    o.dataset.missing = '1'; // the saved device is not in the list: it is kept (never swapped for another card) and marked
+    sel.appendChild(o);
+  }
   sel.value = selectedId || '';
+  markUsedDevices();
+}
+
+// In every device list, a device already chosen by another input (with the same pair of channels) is marked.
+function markUsedDevices() {
+  const picks = [...$('inputsList').querySelectorAll('.input[data-type="device"]')].map((card) => ({ card, id: card.querySelector('.in-device')?.value ?? '', pair: card.querySelector('.in-chan')?.value ?? '0' }));
+  for (const { card, id, pair } of picks) {
+    const sel = card.querySelector('.in-device');
+    if (!sel) continue;
+    for (const o of sel.options) {
+      if (!o.dataset.base) continue;
+      const other = picks.find((p) => p.card !== card && p.id === o.value && p.pair === pair);
+      const gone = o.dataset.missing && devices.length > 0;
+      o.textContent = gone ? `${o.dataset.base} · ${t('set.dev.missing')}` : other ? `${o.dataset.base} · ${t('set.dev.used', { name: inputTitle(other.card) })}` : o.dataset.base;
+    }
+  }
 }
 
 function labelled(key, control, cls = 'field') {
@@ -775,7 +843,7 @@ function inputTitle(card) {
   if (name) return name;
   if (card.dataset.type === 'stream') return hostOf(card.querySelector('.in-url').value) || t('set.in.newStream');
   const sel = card.querySelector('.in-device');
-  return sel.value ? sel.selectedOptions[0]?.textContent || t('set.in.sound') : t('set.in.sound');
+  return sel.value ? optionName(sel.selectedOptions[0]) || t('set.in.sound') : t('set.in.sound');
 }
 
 function cardLogo(card) {
@@ -955,7 +1023,10 @@ function buildInputCard(inp, open) {
     b.setAttribute('aria-label', t(key));
     move.appendChild(b);
   }
-  summary.append(sumLogo, title, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'), move);
+  const live = el('span', 'input__live');
+  live.dataset.live = inp.id;
+  live.title = t('set.live.tip');
+  summary.append(sumLogo, title, live, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'), move);
   const body = el('div', 'input__body');
 
   const enabled = el('input', 'in-enabled');
@@ -1070,9 +1141,10 @@ function syncUrlEye(card) {
 }
 
 function updateInputsFooter() {
+  markUsedDevices();
   const cards = $('inputsList').querySelectorAll('.input');
   $('addStream').disabled = cards.length >= MAX_INPUTS;
-  $('addDevice').disabled = cards.length >= MAX_INPUTS || !!$('inputsList').querySelector('.input[data-type="device"]');
+  $('addDevice').disabled = cards.length >= MAX_INPUTS;
   $('inputsMax').textContent = t('set.inputs.max', { n: MAX_INPUTS });
   $('inputsEmpty').classList.toggle('hidden', cards.length > 0);
   cards.forEach((c, i) => {
@@ -1109,7 +1181,7 @@ function readInputs() {
       enabled: card.querySelector('.in-enabled').checked,
       streamUrl: type === 'stream' ? card.querySelector('.in-url').value.trim() : '',
       deviceId,
-      deviceLabel: deviceId ? sel.selectedOptions[0]?.textContent || '' : '',
+      deviceLabel: deviceId ? optionName(sel.selectedOptions[0]) : '',
       channelPair: type === 'device' ? Number(card.querySelector('.in-chan').value) || 0 : 0,
       thresholdDb: Number(card.querySelector('.in-thr').value),
       minSilenceSec: Number(card.querySelector('.in-min').value),
@@ -1122,6 +1194,7 @@ function readInputs() {
 }
 
 function onInputsEvent(e) {
+  if (e.target.closest('#inputsList')) setTimeout(markUsedDevices, 0); // a device, a pair or a name changed: refresh the "already used" marks
   const card = e.target.closest?.('.input');
   if (!card) return;
   const tg = e.target;
@@ -1275,6 +1348,7 @@ function fillForm() {
   $('gMicro').value = s.general.microRetentionDays;
   $('gInst').value = s.installationName;
   $('gInst').placeholder = info.host || '';
+  fillTemplates(s.notifications.templates);
   $('grEnable').checked = s.notifications.grouping.enabled;
   $('grWindow').value = s.notifications.grouping.windowSec;
   $('grFirst').checked = s.notifications.grouping.firstNow;
@@ -1287,6 +1361,30 @@ function fillForm() {
   syncDisplayFields();
   resetEyes();
   setDirty(false);
+}
+
+// ---- wording of the alerts (Settings → Alerts) ---------------------------------------------------------
+let tplDraft = {}; // { kind: { subject, body } } as edited, saved with the form
+const tplIsGroup = (k) => k.startsWith('group');
+function fillTemplates(templates) {
+  tplDraft = {};
+  for (const k of TEMPLATE_KINDS) tplDraft[k] = { subject: templates?.[k]?.subject || '', body: templates?.[k]?.body || '' };
+  const sel = $('tplKind');
+  const keep = sel.value || TEMPLATE_KINDS[0];
+  sel.replaceChildren(...TEMPLATE_KINDS.map((k) => new Option(t(`set.tpl.kind.${k}`), k)));
+  sel.value = keep;
+  showTemplate();
+}
+function showTemplate() {
+  const k = $('tplKind').value;
+  $('tplSubject').value = tplDraft[k].subject;
+  $('tplBody').value = tplDraft[k].body;
+  const vars = (tplIsGroup(k) ? TEMPLATE_VARS.group : TEMPLATE_VARS.single).map((v) => `{${v}}`).join('  ');
+  $('tplVars').textContent = `${t('set.tpl.vars')} ${vars}`;
+}
+function editTemplate() {
+  const k = $('tplKind').value;
+  tplDraft[k] = { subject: $('tplSubject').value, body: $('tplBody').value };
 }
 
 const syncDisplayFields = () => $('dLogoOpField').classList.toggle('hidden', $('dLogo').value !== 'faded');
@@ -1306,6 +1404,7 @@ function readForm() {
       telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients },
       webhook: { enabled: $('wEnable').checked, url: $('wUrl').value.trim(), method: $('wMethod').value, authHeader: $('wAuth').value.trim() },
       updateAlert: $('uAlert').checked,
+      templates: tplDraft,
       grouping: { enabled: $('grEnable').checked, windowSec: Number($('grWindow').value) || 60, firstNow: $('grFirst').checked }
     },
     installationName: $('gInst').value.trim(),
@@ -1400,7 +1499,7 @@ async function loadDevices() {
     devicesDenied = true;
   }
   for (const sel of $('inputsList').querySelectorAll('.in-device')) {
-    const label = sel.selectedOptions[0]?.textContent || '';
+    const label = optionName(sel.selectedOptions[0]);
     fillDeviceSelect(sel, sel.value, label);
   }
   $('devDenied').classList.toggle('hidden', !devicesDenied);
@@ -1869,12 +1968,20 @@ function wire() {
   form.addEventListener('submit', saveForm);
   form.addEventListener('input', (e) => {
     if (e.target.closest('#bkCard')) return; // the backup box is not a setting
+    if (e.target.id === 'tplSubject' || e.target.id === 'tplBody') editTemplate();
     onInputsEvent(e);
     setDirty(true);
   });
   form.addEventListener('change', (e) => {
     if (e.target.closest('#bkCard')) return;
+    if (e.target.id === 'tplKind') return showTemplate(); // choosing which message to edit is not a change of the settings
     onInputsEvent(e);
+    setDirty(true);
+  });
+  $('tplDefault').addEventListener('click', () => {
+    $('tplSubject').value = '';
+    $('tplBody').value = '';
+    editTemplate();
     setDirty(true);
   });
   $('mTo').addEventListener('change', normaliseRecipients);
@@ -1941,6 +2048,7 @@ function wire() {
   });
   api.on.levels(onLevels);
   api.on.wallExit(() => setWall(false, false));
+  trackTopbarHeight();
   api.on.eventsChanged(() => {
     refreshEvents();
     refreshStats();

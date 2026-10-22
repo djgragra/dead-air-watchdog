@@ -13,6 +13,7 @@ import path from 'node:path';
 
 export const REPO = 'djgragra/dead-air-watchdog';
 export const PRODUCT = 'Dead-Air-Watchdog';
+export const SLUG = 'dead-air-watchdog';
 // GitHub "owner/repo": owner letters, digits, hyphens; repo letters, digits, "_", "-", "." (never ".."). G-Clock's copy used a looser
 // pattern that accepted "../evil"; this one does not (test: checkForUpdate rejects a malformed repository).
 const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9_][\w.-]{0,99}$/;
@@ -58,6 +59,13 @@ export function releaseNotesSummary(body, maxLines = 6, maxChars = 500) {
   const lines = String(body || '').split(/\r?\n/).map((l) => l.replace(/^[#>*\-\s]+/, '').replace(/[*_`]/g, '').trim()).filter(Boolean);
   const text = lines.slice(0, maxLines).join('\n');
   return text.length > maxChars ? text.slice(0, maxChars - 1) + '…' : text;
+}
+
+// The app's page on the site (installer for each system, changelog, hashes): the link that alerts and "release notes" use.
+// English has no prefix; an unknown language falls back to English.
+export function pageUrl(slug = SLUG, lang = 'en') {
+  const prefix = lang === 'it' ? '/it' : lang === 'es' ? '/es' : '';
+  return `https://onairgarage.com${prefix}/tools/${slug}/`;
 }
 
 export async function checkForUpdate({ repo = REPO, current, fetchFn }) {

@@ -79,18 +79,29 @@ test('a corrupt file is kept aside and replaced by defaults', () => {
   assert.ok(fs.readdirSync(path.dirname(file)).some((f) => f.includes('.corrupt-')));
 });
 
-test('inputs: ids, one sound card at most, limit of 32, names and defaults', () => {
+test('inputs: ids, several sound cards, limit of 32, names and defaults', () => {
   const dev = (n) => ({ type: 'device', name: n });
   const s = sanitizeSettings({ inputs: [{ id: 'dup', type: 'stream', name: '  Main  ' }, { id: 'dup', type: 'stream' }, dev('card 1'), dev('card 2'), { type: 'weird' }] });
-  assert.equal(s.inputs.length, 4, 'second sound card dropped');
-  assert.equal(new Set(s.inputs.map((i) => i.id)).size, 4, 'ids made unique');
+  assert.equal(s.inputs.length, 5, 'both sound cards kept');
+  assert.equal(new Set(s.inputs.map((i) => i.id)).size, 5, 'ids made unique');
   assert.equal(s.inputs[0].name, 'Main');
-  assert.equal(s.inputs.filter((i) => i.type === 'device').length, 1);
-  assert.equal(s.inputs[3].type, 'stream', 'unknown type becomes stream');
+  assert.equal(s.inputs.filter((i) => i.type === 'device').length, 2);
+  assert.equal(s.inputs[4].type, 'stream', 'unknown type becomes stream');
   assert.equal(s.inputs[0].thresholdDb, -50);
   assert.equal(s.inputs[0].minSilenceSec, 30);
   const many = sanitizeSettings({ inputs: Array.from({ length: 50 }, () => ({ type: 'stream' })) });
   assert.equal(many.inputs.length, MAX_INPUTS);
+});
+
+test('inputs: sound cards and streams share the one limit of 32; one device can serve several pairs', () => {
+  const mixed = sanitizeSettings({ inputs: Array.from({ length: 40 }, (_, n) => (n % 2 ? { type: 'stream' } : { type: 'device', deviceId: 'card-' + (n % 8), channelPair: (n >> 3) % 4 })) });
+  assert.equal(mixed.inputs.length, MAX_INPUTS);
+  assert.equal(mixed.inputs.filter((i) => i.type === 'device').length, 16);
+  const sameCard = sanitizeSettings({ inputs: [0, 1, 2, 3].map((p) => ({ type: 'device', deviceId: 'dante', deviceLabel: 'Dante Virtual Soundcard', channelPair: p })) });
+  assert.deepEqual(sameCard.inputs.map((i) => i.channelPair), [0, 1, 2, 3]);
+  assert.deepEqual(new Set(sameCard.inputs.map((i) => i.deviceId)), new Set(['dante']));
+  const eight = sanitizeSettings({ inputs: Array.from({ length: 8 }, (_, n) => ({ type: 'device', deviceId: 'usb-' + n })) });
+  assert.equal(eight.inputs.length, 8);
 });
 
 test('settings of the single-input versions are migrated to one input', () => {

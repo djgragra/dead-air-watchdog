@@ -1,5 +1,5 @@
-// Audio engine (hidden window). Opens every monitored input (at most one sound card, any number of
-// streams), runs each through its own level-meter worklet and reports the levels ~10 times a
+// Audio engine (hidden window). Opens every monitored input (any number of sound cards, each input with its
+// own device and pair of channels, and streams), runs each through its own level-meter worklet and reports the levels ~10 times a
 // second in one batch. It also reports a "fault" per input when it stops delivering audio
 // (device removed, stream down) and keeps trying to reconnect.
 (function () {
@@ -17,7 +17,7 @@
   let batch = {};
   let batchTimer = null;
 
-  const keyOf = (i) => [i.type, i.deviceId, i.channelPair, i.streamUrl].join('|');
+  const keyOf = (i) => [i.type, i.deviceId, i.channelPair, i.want, i.streamUrl].join('|');
 
   function setFault(p, reason) {
     if (!p.faulted) api.fault(p.id, reason);
@@ -70,8 +70,9 @@
     const needed = pair * 2 + 2;
     const audioConstraints = {
       // The browser must not "improve" the signal: AGC, noise suppression and echo cancellation
-      // would change the very level we are measuring.
-      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: needed }
+      // would change the very level we are measuring. Every input on the same device asks for the same number of
+      // channels (the most any of them needs), so that opening the device again for another pair gives the same stream.
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: Math.max(needed, input.want || 0) }
     };
     if (input.deviceId) audioConstraints.deviceId = { exact: input.deviceId };
     const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
@@ -185,6 +186,10 @@
   // Makes the open inputs match the list: new ones are opened, removed ones closed, edited ones reopened.
   function sync(list) {
     ensureContext();
+    // channels to ask of each device: the most that any input on it needs
+    const most = new Map();
+    for (const i of list) if (i.type === 'device') most.set(i.deviceId, Math.max(most.get(i.deviceId) || 2, (Math.min(3, Math.max(0, Number(i.channelPair) || 0))) * 2 + 2));
+    list = list.map((i) => (i.type === 'device' ? { ...i, want: most.get(i.deviceId) } : i));
     const wanted = new Map(list.map((i) => [i.id, i]));
     for (const p of [...pipes.values()]) {
       const w = wanted.get(p.id);

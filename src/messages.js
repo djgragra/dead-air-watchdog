@@ -181,8 +181,27 @@ export function inputLabel(lang, input) {
   return input.deviceLabel || t(lang, 'input.defaultDevice');
 }
 
-// Builds subject and body of an alert. kind: 'alarm' | 'reminder' | 'recovered'.
-export function buildAlert(lang, kind, d) {
+// Messages the user can word differently (Settings → Alerts). Empty = the text of the app. The placeholders of each one:
+export const TEMPLATE_KINDS = ['alarm', 'frozen', 'reminder', 'recovered', 'groupAlarm', 'groupRecovered'];
+export const TEMPLATE_VARS = {
+  single: ['input', 'cause', 'start', 'end', 'now', 'threshold', 'seconds', 'tolerance', 'duration', 'host'],
+  group: ['n', 'list', 'now', 'host']
+};
+export const TEMPLATE_LIMITS = { subject: 200, body: 4000 };
+const SUBJECT_PREFIX = `[${APP_NAME}] `;
+
+// A subject or body written by the user, if there is one for `kind`; unknown {words} stay as typed.
+function custom(templates, kind, part, vars) {
+  const raw = templates?.[kind]?.[part];
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  if (!text) return null;
+  const filled = text.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
+  // the prefix [Dead Air Watchdog · installation] stays at the start of every subject, so several PCs can be told apart
+  return part === 'subject' && !HAS_PREFIX.test(filled) ? SUBJECT_PREFIX + filled : filled;
+}
+
+// Builds subject and body of an alert. kind: 'alarm' | 'reminder' | 'recovered'. templates: settings.notifications.templates.
+export function buildAlert(lang, kind, d, templates) {
   const when = (ts) => formatDateTime(ts, lang);
   const vars = {
     input: d.input,
@@ -197,16 +216,18 @@ export function buildAlert(lang, kind, d) {
     host: d.host
   };
   const body = kind === 'alarm' && d.cause === 'frozen' ? 'alarm.bodyFrozen' : `${kind}.body`;
-  return { subject: t(lang, `${kind}.subject`, vars), text: t(lang, body, vars) };
+  const key = kind === 'alarm' && d.cause === 'frozen' ? 'frozen' : kind;
+  return { subject: custom(templates, key, 'subject', vars) ?? t(lang, `${kind}.subject`, vars), text: custom(templates, key, 'body', vars) ?? t(lang, body, vars) };
 }
 
 // One message for several inputs that failed (kind 'alarm') or came back (kind 'recovered') together.
 // items: [{ input, cause, start, end, durationMs }]; d: { now, host }.
-export function buildGroupAlert(lang, kind, items, d) {
+export function buildGroupAlert(lang, kind, items, d, templates) {
   const when = (ts) => formatDateTime(ts, lang);
   const list = items
     .map((i) => t(lang, `group.${kind}.line`, { input: i.input, cause: t(lang, `cause.${i.cause || 'silence'}`), start: when(i.start), end: i.end ? when(i.end) : '', duration: formatDuration(i.durationMs ?? 0) }))
     .join('\n');
   const vars = { n: items.length, list, now: when(d.now), host: d.host };
-  return { subject: t(lang, `group.${kind}.subject`, vars), text: t(lang, `group.${kind}.body`, vars) };
+  const key = kind === 'alarm' ? 'groupAlarm' : 'groupRecovered';
+  return { subject: custom(templates, key, 'subject', vars) ?? t(lang, `group.${kind}.subject`, vars), text: custom(templates, key, 'body', vars) ?? t(lang, `group.${kind}.body`, vars) };
 }

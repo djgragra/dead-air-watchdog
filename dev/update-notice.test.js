@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createAlertState } from '../src/alert-state.js';
 import { createUpdateNotice } from '../src/update-notice.js';
+import { pageUrl } from '../src/updater.js';
 
 const tmpFile = () => path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'daw-')), 'alert-state.json');
 const INFO = { available: true, latest: '26.10.3', current: '26.10.2', url: 'https://github.com/djgragra/dead-air-watchdog/releases/tag/v26.10.3' };
@@ -34,7 +35,8 @@ test('update notice: once per version and per channel (email, Telegram and deskt
   assert.deepEqual(sent.map((x) => x.channel).sort(), ['email', 'telegram']);
   assert.equal(desktop.length, 1);
   assert.match(sent[0].subject, /New version 26\.10\.3 available/);
-  assert.ok(sent[0].text.includes(INFO.url));
+  assert.ok(sent[0].text.includes('https://onairgarage.com/tools/dead-air-watchdog/'));
+  assert.ok(!sent[0].text.includes('github.com'));
 });
 
 test('update notice: the text follows the app language', async () => {
@@ -107,4 +109,22 @@ test('alert-state.json: damaged or missing file means nothing told yet; it is no
   st.markTold('1', 'email');
   assert.equal(path.basename(file), 'alert-state.json');
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).updateNotice.told.email, true);
+});
+
+test('pageUrl: the app page on the site, in the language of the app', () => {
+  assert.equal(pageUrl('dead-air-watchdog', 'en'), 'https://onairgarage.com/tools/dead-air-watchdog/');
+  assert.equal(pageUrl('dead-air-watchdog', 'it'), 'https://onairgarage.com/it/tools/dead-air-watchdog/');
+  assert.equal(pageUrl('dead-air-watchdog', 'es'), 'https://onairgarage.com/es/tools/dead-air-watchdog/');
+  assert.equal(pageUrl(undefined, 'fr'), 'https://onairgarage.com/tools/dead-air-watchdog/');
+});
+
+test('update notice: the link of the site in Italian and Spanish, never the GitHub release', async () => {
+  for (const [language, prefix] of [['it', '/it'], ['es', '/es']]) {
+    const { sent, notice } = setup({ settings: { language } });
+    await notice.announce(INFO);
+    for (const m of sent) {
+      assert.ok(m.text.includes(`https://onairgarage.com${prefix}/tools/dead-air-watchdog/`));
+      assert.ok(!m.text.includes('github.com'));
+    }
+  }
 });

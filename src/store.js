@@ -6,6 +6,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { mapSecrets } from './secrets.js';
 import { parseAddresses } from './addresses.js';
+import { TEMPLATE_KINDS, TEMPLATE_LIMITS } from './messages.js';
 import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 
 export const MAX_INPUTS = 32;
@@ -30,7 +31,7 @@ export const DEFAULT_INPUT = Object.freeze({
 export const DEFAULT_SETTINGS = Object.freeze({
   language: 'en', // 'en' | 'it' | 'es' — the app always starts in English until the user changes it
   theme: 'dark', // 'dark' | 'light' | 'auto'
-  inputs: [], // see DEFAULT_INPUT: at most one sound card and any number of streams (MAX_INPUTS in total)
+  inputs: [], // see DEFAULT_INPUT: any mix of sound cards (several, or several pairs of one) and streams, MAX_INPUTS in total
   installationName: '', // shown in alerts as [Dead Air Watchdog · name]; empty = the computer name
   display: {
     edgeGlow: 'wall', // screen-edge glow: 'wall' (only in wall display) | 'always' | 'off'
@@ -47,6 +48,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: [] }, // recipients: [address], all sent in Bcc
     telegram: { enabled: false, botToken: '', recipients: [] }, // recipients: [{ chatId, note }]
     webhook: { enabled: false, url: '', method: 'POST', authHeader: '' }, // one HTTP request per alert (src/webhook.js); url and authHeader are secrets
+    templates: {}, // wording of the alerts chosen by the user: { alarm|frozen|reminder|recovered|groupAlarm|groupRecovered: { subject, body } }; empty = the text of the app
     updateAlert: true, // tell by email / Telegram, once per version, that a new version is out
     grouping: { enabled: true, windowSec: 60, firstNow: true } // several inputs failing (or coming back) together: one message with the list
   },
@@ -93,11 +95,10 @@ function migrateLegacy(raw) {
   return { ...rest, inputs: configured ? [{ ...input, thresholdDb: detection?.thresholdDb, minSilenceSec: detection?.minSilenceSec }] : [] };
 }
 
-function sanitizeInput(raw, usedIds, hasDevice) {
+function sanitizeInput(raw, usedIds) {
   const d = DEFAULT_INPUT;
   const i = { ...d, ...(isObj(raw) ? raw : {}) };
   i.type = i.type === 'device' ? 'device' : 'stream';
-  if (i.type === 'device' && hasDevice) return null; // only one sound card
   let id = String(i.id || '');
   if (!/^[\w-]{1,64}$/.test(id) || usedIds.has(id)) id = randomUUID();
   usedIds.add(id);
@@ -118,6 +119,19 @@ function sanitizeInput(raw, usedIds, hasDevice) {
   return Object.fromEntries(Object.keys(d).map((k) => [k, i[k]]));
 }
 
+function sanitizeTemplates(raw) {
+  const out = {};
+  if (!isObj(raw)) return out;
+  for (const kind of TEMPLATE_KINDS) {
+    const t = raw[kind];
+    if (!isObj(t)) continue;
+    const subject = String(t.subject ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, TEMPLATE_LIMITS.subject); // a subject is one line
+    const body = String(t.body ?? '').replace(/\r\n?/g, '\n').trim().slice(0, TEMPLATE_LIMITS.body);
+    if (subject || body) out[kind] = { subject, body };
+  }
+  return out;
+}
+
 // Keeps stored values inside what the rest of the app can handle (also for hand-edited files).
 export function sanitizeSettings(s) {
   const d = DEFAULT_SETTINGS;
@@ -132,15 +146,7 @@ export function sanitizeSettings(s) {
   if (!['max', 'large', 'normal'].includes(out.display.wallClock)) out.display.wallClock = d.display.wallClock;
   out.installationName = String(out.installationName || '').trim().slice(0, 60);
   const used = new Set();
-  let hasDevice = false;
-  out.inputs = (Array.isArray(out.inputs) ? out.inputs : [])
-    .slice(0, MAX_INPUTS)
-    .map((raw) => {
-      const i = sanitizeInput(raw, used, hasDevice);
-      if (i?.type === 'device') hasDevice = true;
-      return i;
-    })
-    .filter(Boolean);
+  out.inputs = (Array.isArray(out.inputs) ? out.inputs : []).slice(0, MAX_INPUTS).map((raw) => sanitizeInput(raw, used));
   out.notifications.reminderMin = Math.round(clamp(out.notifications.reminderMin, 0, 1440, 0));
   out.notifications.sound.enabled = !!out.notifications.sound.enabled;
   out.notifications.sound.volume = Math.round(clamp(out.notifications.sound.volume, 0.05, 1, 0.6) * 100) / 100;
@@ -168,6 +174,7 @@ export function sanitizeSettings(s) {
   gr.enabled = gr.enabled !== false;
   gr.windowSec = Math.round(clamp(gr.windowSec, 10, 600, 60));
   gr.firstNow = gr.firstNow !== false;
+  out.notifications.templates = sanitizeTemplates(out.notifications.templates);
   out.general.retentionDays = Math.round(clamp(out.general.retentionDays, 30, 3650, 365));
   out.general.microRetentionDays = Math.round(clamp(out.general.microRetentionDays, 1, 365, 30));
   const us = isObj(out.updateState) ? out.updateState : {};
