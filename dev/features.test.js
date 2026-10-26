@@ -430,7 +430,7 @@ test('settings: new fields have safe defaults and are kept inside their limits',
   assert.equal(w.notifications.grouping.windowSec, 10);
   assert.equal(w.general.microRetentionDays, 365);
   assert.equal(w.installationName, 'Regia');
-  assert.deepEqual(w.window, { x: 10, y: 20, width: 760, height: 8000, maximized: true, compact: false, alwaysOnTop: false });
+  assert.deepEqual(w.window, { x: 10, y: 20, width: 760, height: 8000, maximized: true, compact: false, alwaysOnTop: false, hideMenuBar: false });
   assert.ok(DEFAULT_SETTINGS.display.wallLogo);
 });
 

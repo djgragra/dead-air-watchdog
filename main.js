@@ -22,6 +22,7 @@ import { aggregateDeadAir } from './src/core/stats.js';
 import { buildReport, findCommonProblems, periodRange, reportToCsv } from './src/core/report.js';
 import { toCsv, toJson } from './src/core/export.js';
 import { formatDuration } from './src/core/format.js';
+import { appMenuTemplate, compactContextTemplate, menuBarHidden, nextZoomLevel } from './src/window-menu.js';
 import { t, alertPrefix, installationName, withPrefix, inputLabel } from './src/messages.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -239,15 +240,31 @@ const rememberWindowSoon = () => {
 };
 
 // Full screen reached two ways (F11 of the default menu, then the wall display) can leave the menu bar hidden on Windows.
+// In the compact view the menu bar can be hidden on purpose (Settings, tray menu, right-click menu): then Alt shows it for a moment.
 function restoreMenuBar() {
   if (process.platform === 'darwin') return;
   const show = () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isFullScreen()) return;
-    mainWindow.setAutoHideMenuBar(false);
-    mainWindow.setMenuBarVisibility(true);
+    const hide = menuBarHidden(store.getSettings().window, process.platform);
+    mainWindow.setAutoHideMenuBar(hide);
+    mainWindow.setMenuBarVisibility(!hide);
   };
   show();
   setTimeout(show, 150); // once the window has finished leaving full screen
+}
+
+// Zoom of the page ('in' | 'out' | 'reset'), the same one as Ctrl +, Ctrl - and Ctrl 0 of the View menu (Chromium remembers it).
+function zoomWindow(direction) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const wc = mainWindow.webContents;
+  wc.setZoomLevel(direction === 'reset' ? 0 : nextZoomLevel(wc.getZoomLevel(), direction));
+}
+
+// Right-click menu of the compact view (also the way back to a hidden menu bar).
+function showCompactContextMenu() {
+  const win = store.getSettings().window;
+  if (!win.compact || !mainWindow || mainWindow.isDestroyed()) return;
+  Menu.buildFromTemplate(compactContextTemplate(win, (k) => t(lang(), k), { toggle: toggleWindowView, zoom: zoomWindow })).popup({ window: mainWindow });
 }
 
 // "Always on top" and the compact view follow the settings (the buttons of the window, the tray menu, a backup that is imported).
@@ -256,7 +273,10 @@ function applyWindowMode(next) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   const w = next.window;
   if (mainWindow.isAlwaysOnTop() !== w.alwaysOnTop) mainWindow.setAlwaysOnTop(w.alwaysOnTop, 'floating');
-  if (w.compact === compactApplied || mainWindow.isFullScreen()) return; // the wall display is full screen: the view changes after it
+  if (w.compact === compactApplied || mainWindow.isFullScreen()) {
+    if (!mainWindow.isFullScreen()) restoreMenuBar(); // the menu bar switch can change with the view unchanged
+    return; // the wall display is full screen: the view changes after it
+  }
   clearTimeout(boundsTimer);
   rememberWindow(); // the place of the view that is being left
   compactApplied = w.compact;
@@ -267,6 +287,7 @@ function applyWindowMode(next) {
   const cur = mainWindow.getBounds();
   mainWindow.setBounds({ x: b.x ?? cur.x, y: b.y ?? cur.y, width: b.width, height: b.height });
   if (!compactApplied && store.getSettings().window.maximized) mainWindow.maximize();
+  restoreMenuBar();
 }
 
 function createWindow() {
@@ -287,6 +308,8 @@ function createWindow() {
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('zoom-changed', (_e, direction) => zoomWindow(direction)); // Ctrl + mouse wheel
+  mainWindow.webContents.on('context-menu', showCompactContextMenu);
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith('file://')) e.preventDefault();
   });
@@ -294,6 +317,7 @@ function createWindow() {
   const hidden = settings.general.startMinimized && app.getLoginItemSettings().wasOpenedAtLogin;
   mainWindow.once('ready-to-show', () => {
     if (settings.window.maximized && !compactApplied) mainWindow.maximize();
+    restoreMenuBar();
     if (!hidden) mainWindow.show();
   });
   for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) mainWindow.on(ev, rememberWindowSoon);
@@ -346,7 +370,7 @@ function updateTray(status) {
   const overall = status?.running ? status.overall : 'idle';
   const state = overall === 'starting' || overall === 'paused' ? 'idle' : overall;
   const wv = store.getSettings().window;
-  const key = `${state}|${status?.running}|${lang()}|${status?.inputs?.length ?? 0}|${wv.compact}|${wv.alwaysOnTop}`;
+  const key = `${state}|${status?.running}|${lang()}|${status?.inputs?.length ?? 0}|${wv.compact}|${wv.alwaysOnTop}|${wv.hideMenuBar}`;
   if (key === trayKey) return;
   trayKey = key;
   tray.setImage(trayImage(state));
@@ -359,6 +383,7 @@ function updateTray(status) {
       { type: 'separator' },
       { label: t(lang(), 'tray.compact'), type: 'checkbox', checked: wv.compact, click: () => toggleWindowView('compact') },
       { label: t(lang(), 'tray.top'), type: 'checkbox', checked: wv.alwaysOnTop, click: () => toggleWindowView('alwaysOnTop') },
+      ...(process.platform === 'darwin' ? [] : [{ label: t(lang(), 'tray.hideMenu'), type: 'checkbox', checked: wv.hideMenuBar, click: () => toggleWindowView('hideMenuBar') }]),
       { type: 'separator' },
       { label: t(lang(), 'tray.quit'), click: () => app.quit() }
     ])
@@ -507,7 +532,7 @@ function registerIpc() {
   // compact view and always on top: one button each in the window, one item each in the tray menu; both are remembered
   toggleWindowView = (key) => settingsChanged(store.updateSettings({ window: { [key]: !store.getSettings().window[key] } }));
   handle('window:view', (key, on) => {
-    if (key !== 'compact' && key !== 'alwaysOnTop') throw new Error('unknown view');
+    if (key !== 'compact' && key !== 'alwaysOnTop' && key !== 'hideMenuBar') throw new Error('unknown view');
     return settingsChanged(store.updateSettings({ window: { [key]: !!on } }));
   });
 
@@ -786,6 +811,8 @@ function announceStartup() {
 }
 
 app.whenReady().then(() => {
+  const menuTemplate = appMenuTemplate(process.platform);
+  if (menuTemplate) Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate)); // the default menu without the "Zoom" entry that does nothing
   hadSettingsFile = fs.existsSync(settingsFile());
   store = createStore({ file: settingsFile(), seal, open });
   // rewrite secrets saved before the keystore was available

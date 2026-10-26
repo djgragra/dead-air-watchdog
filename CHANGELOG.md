@@ -1,5 +1,15 @@
 # Changelog
 
+## 26.10.12 — 2026-10-26
+
+- **Menu: "Window → Zoom" removed on Windows and Linux.** It did nothing there (it is a macOS command); the zoom of the page stays in the *View* menu (Ctrl +, Ctrl −, Ctrl 0) and now also works with Ctrl and the mouse wheel. Thanks to Paul, who found it and suggested the wheel.
+- **Menu bar hidden in the compact view (Windows and Linux).** *Settings → General → Display → Hide the menu bar in the compact view*, or an item in the tray menu. Right-click the compact window to bring it back (the menu also has the views, always on top and the zoom), or press Alt for a moment. Thanks to Paul, who suggested it.
+- **Wall display: names up to "Very large"** (*Settings → General → Display → Names in the wall display*), so the name of the input that went silent can be read from far away. Thanks to Paul and a colleague of his.
+- **Compact view, narrow window.** The buttons stay on the first line and the status badge is the one that goes to the next line; in a very narrow window (about 250 px) the level bars give way, so the names are not cut. Thanks to Paul.
+- **Compact view, shorter window.** When the window gets shorter while the list is at its end, the end of the list stays in sight and the top rows go first. Thanks to Paul. Not tried on a real Windows PC.
+- **Wall display: logos of "Medium" size**, between the small one next to the name and the large one.
+- Tests: new ones for the menu without "Zoom", the wheel zoom, the hidden menu bar, the right-click menu, the new sizes and the narrow compact layout (`dev/window-menu.test.js`). The menus and the window were not run on a real Windows PC.
+
 ## 26.10.11 — 2026-10-26
 
 - **Micro-silences can be switched off.** *Settings → General → Write micro-silences in the event log* switches them off for all the inputs, and each input can decide for itself in *More options → Micro-silences in the log* (*Same as in General*, *Write them*, *Do not write them*). With spoken-word channels, or music without crossfades, they could fill the log. An input that has them off writes no micro-silence, shows no counter on its tile, and the counter and the filter of the Dashboard and of the log disappear when all the inputs have them off (the micro-silences already in the log stay until they expire). They are on by default, so nothing changes for you unless you switch them off. The alarm, the alerts and the yellow light are not affected; the summary cannot use the micro-silences of an input that has them off to tell a fault of the stream from one of the network.
