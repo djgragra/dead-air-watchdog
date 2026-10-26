@@ -42,6 +42,8 @@ La **Dashboard** mostra un grande semaforo con lo stato peggiore di tutti gli in
 
 Su ogni tessera, **Metti in pausa gli avvisi di questo ingresso** spegne gli avvisi di quell'ingresso per 1 ora o fino a domani alle 06:00 (per manutenzione). La pausa finisce da sola, sopravvive a un riavvio ed è scritta nel registro; l'ingresso viene comunque misurato e mostrato come IN PAUSA.
 
+La **Vista compatta** (pulsante *Vista compatta* in fondo alla barra laterale, o nel menu della tray) riduce la finestra per uno schermo pieno di altri programmi: niente barra laterale né riepilogo, una riga per ingresso con nome, stato e due barre sottili di livello, e una finestra minima di circa 280 × 110 pixel. *Vista normale* (nello stesso punto e nella barra in alto) riporta la finestra alle sue dimensioni e al suo posto. **Sempre in primo piano** tiene la finestra sopra le altre, in entrambe le viste. Le due scelte, e posizione e dimensione di ciascuna vista, vengono ricordate. Il rilevamento e gli avvisi non cambiano; il Wall display usa sempre tutto lo schermo come prima.
+
 Il **Wall display** è per uno schermo sempre acceso in una redazione o in uno studio: a schermo intero, con lo schermo tenuto sveglio, l'orologio e la data grandi quanto lo schermo permette, una tessera grande per ingresso (da 1 a 32; le tessere si riordinano per starci) e un alone sul bordo dello schermo quando qualcosa non va. In *Impostazioni → Generali → Schermo* scegli l'alone (solo nel Wall display, sempre, spento), la dimensione dei nomi (automatica, grande, media, piccola), i loghi (piccolo accanto al nome, grande, o uno sfondo tenue) e se l'app si apre direttamente nel Wall display.
 
 ## Avvisi
@@ -62,7 +64,7 @@ Tutte le password, i token e gli indirizzi sono conservati cifrati con il portac
 
 Il **Registro eventi** elenca, per ogni ingresso, l'inizio, la fine, la durata, la causa (silenzio, ingresso offline, audio bloccato) e la nota; anche i periodi in cui non si monitorava nulla (app chiusa, computer in sospensione), le **pause** e i **micro-silenzi**. Filtralo per tipo o per ingresso, e *Esporta CSV* o *Esporta JSON*. *Svuota il registro…* cancella tutto dopo conferma. Un **grafico** mostra il dead air per giorno su 7, 14 o 30 giorni, per tutti gli ingressi o per uno.
 
-- **Micro-silenzi**: ogni calo sotto la soglia, per quanto breve, viene registrato con ora, durata e causa, contato per ingresso e in totale per oggi, e conservato per 30 giorni per default. Per loro non parte nessun avviso e la regola dell'allarme non cambia: servono a regolare la soglia e a distinguere un guasto del programma da uno dello stream o della rete.
+- **Micro-silenzi**: ogni calo sotto la soglia, per quanto breve, viene registrato con ora, durata e causa, contato per ingresso e in totale per oggi, e conservato per 30 giorni per default. Per loro non parte nessun avviso e la regola dell'allarme non cambia: servono a regolare la soglia e a distinguere un guasto del programma da uno dello stream o della rete. Con canali di parlato, o musica senza dissolvenze incrociate, possono riempire il registro: spegnili in *Impostazioni → Generali → Scrivi i micro-silenzi nel registro eventi* per tutti gli ingressi, oppure per un ingresso in *Impostazioni → Ingressi → Altre opzioni → Micro-silenzi nel registro* (*Come in Generale*, *Scrivili*, *Non scriverli*). Un ingresso che li ha spenti non li scrive, non li conta e non li mostra, e il riepilogo non può usarli per distinguere un guasto dello stream da uno della rete; quelli già nel registro restano fino alla scadenza. Di default sono attivi.
 - **Riepilogo e problemi comuni**: per ogni ingresso la disponibilità (la quota di tempo monitorato senza dead air; il tempo in cui l'app non girava, le pause e le ore spente non contano), il numero di allarmi, il dead air totale e il più lungo, per questo mese, il mese scorso o gli ultimi 7 o 30 giorni, con esportazione CSV. Quando più ingressi perdono i dati o vanno in allarme a meno di 10 secondi l'uno dall'altro, gli eventi sono segnati come **Problema comune**: probabilmente la rete o il computer, non gli stream.
 
 ## Heartbeat
@@ -75,7 +77,7 @@ Le impostazioni sono in schede, nello stesso ordine di ogni app OnAir Garage. Pr
 
 | Scheda | Contenuto |
 |---|---|
-| Generali | Avvia l'app all'accesso, avvia nascosta nella tray, avvia il monitoraggio all'apertura dell'app, impedisci la sospensione del computer durante il monitoraggio, per quanto conservare il registro eventi e i micro-silenzi, il **nome di questa installazione** (compare negli avvisi), lingua e tema, controlla gli aggiornamenti, e le opzioni **Schermo** del Wall display |
+| Generali | Avvia l'app all'accesso, avvia nascosta nella tray, avvia il monitoraggio all'apertura dell'app, impedisci la sospensione del computer durante il monitoraggio, se scrivere i micro-silenzi nel registro e per quanto conservarli, per quanto conservare il registro eventi, il **nome di questa installazione** (compare negli avvisi), lingua e tema, controlla gli aggiornamenti, e le opzioni **Schermo** del Wall display |
 | Ingressi | Gli ingressi, con dispositivo o indirizzo, nome, logo, soglia, tempo e opzioni |
 | Avvisi | Email, Telegram, HTTP, il suono, la ripetizione, il raggruppamento, il testo degli avvisi e l'heartbeat |
 | Aggiornamenti | L'aggiornamento guidato (vedi sotto) |

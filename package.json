@@ -1,7 +1,7 @@
 {
   "name": "dead-air-watchdog",
   "productName": "Dead Air Watchdog",
-  "version": "26.10.10",
+  "version": "26.10.11",
   "description": "Monitors an audio input or an Icecast/Shoutcast stream and alerts by email and Telegram when it stays silent",
   "main": "main.js",
   "type": "module",

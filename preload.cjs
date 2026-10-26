@@ -35,6 +35,9 @@ contextBridge.exposeInMainWorld('api', {
   wall: {
     set: (on) => invoke('wall:set', on)
   },
+  window: {
+    setView: (key, on) => invoke('window:view', key, on) // key: 'compact' | 'alwaysOnTop'
+  },
   audio: {
     devices: () => invoke('audio:devices'),
     accessStatus: () => invoke('audio:access-status'),

@@ -25,6 +25,8 @@
       <button type="button" class="nav__item" data-view="help"><span class="nav__ico nav__ico--help" aria-hidden="true"></span><span data-i18n="nav.help">Help &amp; about</span></button>
     </nav>
     <div class="side__foot">
+      <button type="button" class="btn btn--small btn--toggle js-top" aria-pressed="false" data-i18n="view.top">Always on top</button>
+      <button type="button" class="btn btn--small js-compact" data-i18n="view.compact">Compact view</button>
       <label class="field field--inline"><span data-i18n="side.language">Language</span><select id="langSel"></select></label>
       <label class="field field--inline"><span data-i18n="side.theme">Theme</span>
         <select id="themeSel">
@@ -44,6 +46,8 @@
       <div class="inputw"><div class="label" data-i18n="top.inputs">Inputs</div><div class="inputw__name" id="inputName">—</div></div>
       <div class="uptime"><div class="label" data-i18n="top.since">Monitoring for</div><div class="uptime__val" id="uptime">—</div></div>
       <button type="button" class="btn" id="wallBtn" data-i18n="wall.enter">Wall display</button>
+      <button type="button" class="btn btn--small btn--toggle view-only-compact js-top" aria-pressed="false" data-i18n="view.top">Always on top</button>
+      <button type="button" class="btn btn--small view-only-compact js-compact" data-i18n="view.compact">Compact view</button>
       <button type="button" class="btn btn--primary" id="startBtn" data-i18n="top.start">Start monitoring</button>
     </header>
 
@@ -90,7 +94,7 @@
         <div class="card kpi"><div class="label" data-i18n="kpi.today">Dead air today</div><div class="kpi__val" id="kpiToday">—</div><div class="kpi__sub" id="kpiTodaySub"></div></div>
         <div class="card kpi"><div class="label" id="kpiPeriodLabel">Last 7 days</div><div class="kpi__val" id="kpiPeriod">—</div><div class="kpi__sub" id="kpiPeriodSub"></div></div>
         <div class="card kpi"><div class="label" data-i18n="kpi.longest">Longest</div><div class="kpi__val" id="kpiLongest">—</div><div class="kpi__sub" id="kpiLongestSub"></div></div>
-        <div class="card kpi"><div class="label" data-i18n="kpi.micro">Micro-silences today</div><div class="kpi__val" id="kpiMicro">—</div><div class="kpi__sub" data-i18n="kpi.microSub"></div></div>
+        <div class="card kpi" id="kpiMicroCard"><div class="label" data-i18n="kpi.micro">Micro-silences today</div><div class="kpi__val" id="kpiMicro">—</div><div class="kpi__sub" data-i18n="kpi.microSub"></div></div>
       </div>
 
       <div class="grid2" id="grid2">
@@ -136,7 +140,7 @@
             <div class="seg" role="group" aria-label="Filter">
               <button type="button" class="seg__btn is-active" data-filter="all" data-i18n="log.f.all">All</button>
               <button type="button" class="seg__btn" data-filter="dead-air" data-i18n="log.f.dead">Dead air</button>
-              <button type="button" class="seg__btn" data-filter="blip" data-i18n="log.f.micro">Micro-silences</button>
+              <button type="button" class="seg__btn" id="filterMicro" data-filter="blip" data-i18n="log.f.micro">Micro-silences</button>
               <button type="button" class="seg__btn" data-filter="pause" data-i18n="log.f.pause">Pauses</button>
               <button type="button" class="seg__btn" data-filter="gap" data-i18n="log.f.gap">Monitoring gaps</button>
             </div>
@@ -180,6 +184,8 @@
             <label class="check"><input type="checkbox" id="gAuto" /><span data-i18n="set.gen.auto">Start monitoring when the app opens</span></label>
             <label class="check"><input type="checkbox" id="gAwake" /><span data-i18n="set.gen.awake">Keep the computer from sleeping while monitoring</span></label>
             <label class="field"><span data-i18n="set.gen.retention">Keep the event log for (days)</span><input type="number" id="gRet" min="30" max="3650" step="1" inputmode="numeric" class="num" /></label>
+            <label class="check"><input type="checkbox" id="gMicroOn" /><span data-i18n="set.gen.microOn">Write micro-silences in the event log</span></label>
+            <p class="hint" data-i18n="set.gen.microOn.hint">A micro-silence is a drop below the threshold that ends before the alarm. Each input can override this in Settings → Inputs → More options.</p>
             <label class="field"><span data-i18n="set.gen.micro">Keep micro-silences for (days)</span><input type="number" id="gMicro" min="1" max="365" step="1" inputmode="numeric" class="num" /></label>
           </div>
         </fieldset>

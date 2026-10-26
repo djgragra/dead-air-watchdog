@@ -11,6 +11,13 @@ import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 
 export const MAX_INPUTS = 32;
 
+// Smallest size of the window in the normal and in the compact view.
+export const NORMAL_MIN = Object.freeze({ width: 760, height: 560 });
+export const COMPACT_MIN = Object.freeze({ width: 280, height: 110 });
+
+// Height of the compact view for a number of inputs when no size was saved: the bar on top (two lines when the window is narrow) plus one row per input (at most 8, then it scrolls).
+export const compactHeightFor = (inputs) => 120 + 46 * Math.min(8, Math.max(1, inputs));
+
 export const DEFAULT_INPUT = Object.freeze({
   id: '',
   name: '', // empty = derived from the stream host or the device name
@@ -24,6 +31,7 @@ export const DEFAULT_INPUT = Object.freeze({
   yellowDelaySec: 2, // the traffic light of the input stays green until the audio has been below the threshold this long (0 = at once)
   frozenSec: 0, // 0 = off; otherwise: a level that stays (almost) the same for this long above the threshold is an alarm ("frozen audio")
   frozenToleranceDb: 1, // how much the level may vary and still count as the same
+  microSilences: 'default', // micro-silences in the log for this input: 'default' (as in General) | 'on' | 'off'
   schedule: DEFAULT_SCHEDULE, // monitoring hours: see src/core/schedule.js
   enabled: true
 });
@@ -58,6 +66,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     autoStartMonitoring: true,
     keepAwake: true,
     retentionDays: 365,
+    microSilences: true, // write the brief drops below the threshold (micro-silences) in the event log; an input can override it
     microRetentionDays: 30, // brief drops below the threshold (micro-silences) are kept for less time than the alarms
     checkUpdates: true,
     updateRepo: 'djgragra/dead-air-watchdog'
@@ -67,11 +76,18 @@ export const DEFAULT_SETTINGS = Object.freeze({
   closeHintShown: false,
   updateState: { skipVersion: '', remindUntil: 0, lastCheck: null }, // what the user decided about a new version; lastCheck { at, ok, error }
   lastSeenVersion: '', // the version that last ran: a newer one at start-up means "updated" (What's new window)
-  window: { x: null, y: null, width: 1180, height: 780, maximized: false } // remembered place and size of the main window
+  window: { x: null, y: null, width: 1180, height: 780, maximized: false, compact: false, alwaysOnTop: false }, // remembered place and size of the main window, and its view (compact, always on top)
+  compactWindow: { x: null, y: null, width: 380, height: 0 } // place and size of the compact view (height 0 = from the number of inputs)
 });
 
 // GitHub "owner/repo": owner letters, digits, hyphens; repo letters, digits, "_", "-", "." (not "." or "..").
 export const REPO_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9_][\w.-]{0,99}$/;
+
+// Are the micro-silences of this input logged? Its own choice wins, otherwise the one in General.
+export const microSilencesOn = (settings, input) => {
+  const own = input?.microSilences;
+  return own === 'on' ? true : own === 'off' ? false : settings?.general?.microSilences !== false;
+};
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 
@@ -114,6 +130,7 @@ function sanitizeInput(raw, usedIds) {
   const fz = Number(i.frozenSec);
   i.frozenSec = Number.isFinite(fz) && fz > 0 ? Math.round(clamp(fz, 10, 3600, 60)) : 0;
   i.frozenToleranceDb = Math.round(clamp(i.frozenToleranceDb, 0.1, 6, d.frozenToleranceDb) * 10) / 10;
+  i.microSilences = ['default', 'on', 'off'].includes(i.microSilences) ? i.microSilences : d.microSilences;
   i.schedule = sanitizeSchedule(i.schedule, { thresholdDb: i.thresholdDb, minSilenceSec: i.minSilenceSec });
   i.enabled = i.enabled !== false;
   return Object.fromEntries(Object.keys(d).map((k) => [k, i[k]]));
@@ -176,6 +193,7 @@ export function sanitizeSettings(s) {
   gr.firstNow = gr.firstNow !== false;
   out.notifications.templates = sanitizeTemplates(out.notifications.templates);
   out.general.retentionDays = Math.round(clamp(out.general.retentionDays, 30, 3650, 365));
+  out.general.microSilences = out.general.microSilences !== false;
   out.general.microRetentionDays = Math.round(clamp(out.general.microRetentionDays, 1, 365, 30));
   const us = isObj(out.updateState) ? out.updateState : {};
   const lc = isObj(us.lastCheck) && Number.isFinite(us.lastCheck.at) ? { at: us.lastCheck.at, ok: !!us.lastCheck.ok, error: String(us.lastCheck.error || '').slice(0, 300) } : null;
@@ -183,7 +201,10 @@ export function sanitizeSettings(s) {
   out.lastSeenVersion = String(out.lastSeenVersion || '').slice(0, 40);
   const w = isObj(out.window) ? out.window : {};
   const hasPos = Number.isFinite(w.x) && Number.isFinite(w.y);
-  out.window = { x: hasPos ? Math.round(w.x) : null, y: hasPos ? Math.round(w.y) : null, width: Math.round(clamp(w.width, 760, 8000, 1180)), height: Math.round(clamp(w.height, 560, 8000, 780)), maximized: !!w.maximized };
+  out.window = { x: hasPos ? Math.round(w.x) : null, y: hasPos ? Math.round(w.y) : null, width: Math.round(clamp(w.width, 760, 8000, 1180)), height: Math.round(clamp(w.height, 560, 8000, 780)), maximized: !!w.maximized, compact: !!w.compact, alwaysOnTop: !!w.alwaysOnTop };
+  const cw = isObj(out.compactWindow) ? out.compactWindow : {};
+  const cPos = Number.isFinite(cw.x) && Number.isFinite(cw.y);
+  out.compactWindow = { x: cPos ? Math.round(cw.x) : null, y: cPos ? Math.round(cw.y) : null, width: Math.round(clamp(cw.width, COMPACT_MIN.width, 8000, 380)), height: Number(cw.height) > 0 ? Math.round(clamp(cw.height, COMPACT_MIN.height, 8000, COMPACT_MIN.height)) : 0 };
   if (!REPO_RE.test(out.general.updateRepo || '')) out.general.updateRepo = d.general.updateRepo;
   delete out.input;
   delete out.detection;

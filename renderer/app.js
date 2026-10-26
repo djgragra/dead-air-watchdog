@@ -207,6 +207,18 @@ function applyDisplay() {
   document.body.dataset.walllogo = d.wallLogo || 'large';
   document.body.dataset.wallclock = d.wallClock || 'max';
   document.body.style.setProperty('--logo-op', String(d.wallLogoOpacity ?? 0.2));
+  // compact view and always on top (remembered with the window)
+  const w = settings?.window || {};
+  document.body.classList.toggle('compact', !!w.compact);
+  for (const b of document.querySelectorAll('.js-compact')) {
+    b.dataset.i18n = w.compact ? 'view.normal' : 'view.compact';
+    b.textContent = t(b.dataset.i18n);
+  }
+  if (w.compact && $('view-dashboard').classList.contains('hidden')) showView('dashboard'); // the compact view has only the dashboard
+  for (const b of document.querySelectorAll('.js-top')) {
+    b.classList.toggle('is-on', !!w.alwaysOnTop);
+    b.setAttribute('aria-pressed', String(!!w.alwaysOnTop));
+  }
 }
 
 function fitWallNames() {
@@ -387,8 +399,15 @@ function blipsOf(inputId) {
   return events.filter((e) => e.kind === 'blip' && e.start >= from && (!inputId || e.inputId === inputId));
 }
 
+// Are the micro-silences of this input logged? Same rule as microSilencesOn() in src/store.js.
+function microOn(inputId) {
+  const own = settings?.inputs.find((i) => i.id === inputId)?.microSilences;
+  return own === 'on' ? true : own === 'off' ? false : settings?.general.microSilences !== false;
+}
+const anyMicroOn = () => !settings || !settings.inputs.length || settings.inputs.some((i) => microOn(i.id));
+
 function renderTileBlips(tile, inputId) {
-  const list = blipsOf(inputId);
+  const list = microOn(inputId) ? blipsOf(inputId) : [];
   const b = tile.blips;
   b.classList.toggle('hidden', !list.length);
   if (!list.length) return;
@@ -576,6 +595,15 @@ function renderKpis() {
   $('kpiLongest').textContent = longest ? formatDuration(longest) : t('kpi.none');
   $('kpiLongestSub').textContent = '';
   $('kpiMicro').textContent = String(blipsOf('').length);
+  // all inputs switched off: no counter; the filter stays only while there are micro-silences from before in the log
+  const micro = anyMicroOn();
+  $('kpiMicroCard').classList.toggle('hidden', !micro);
+  const keepFilter = micro || events.some((e) => e.kind === 'blip');
+  $('filterMicro').classList.toggle('hidden', !keepFilter);
+  if (!keepFilter && logFilter === 'blip') {
+    logFilter = 'all';
+    for (const x of document.querySelectorAll('[data-filter]')) x.classList.toggle('is-active', x.dataset.filter === 'all');
+  }
 }
 
 async function refreshStats() {
@@ -987,7 +1015,18 @@ function buildAdvanced(inp) {
   const sField = el('div', 'field');
   sField.append(sLabel, sBox, tel('p', 'hint', 'sched.hint'));
 
-  body.append(yField, fField, sField);
+  // micro-silences in the log
+  const mSel = el('select', 'in-micro');
+  for (const m of ['default', 'on', 'off']) {
+    const o = new Option(t(`adv.micro.${m}`), m);
+    o.dataset.i18n = `adv.micro.${m}`;
+    mSel.appendChild(o);
+  }
+  mSel.value = inp.microSilences || 'default';
+  const mField = el('div', 'field');
+  mField.append(tel('span', '', 'adv.micro'), mSel, tel('p', 'hint', 'adv.micro.hint'));
+
+  body.append(yField, mField, fField, sField);
   box.appendChild(body);
   return box;
 }
@@ -1161,7 +1200,7 @@ function renderInputsList() {
 }
 
 function addInput(type) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, schedule: { enabled: false, rules: [] }, enabled: true };
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', schedule: { enabled: false, rules: [] }, enabled: true };
   const card = buildInputCard(base, true);
   $('inputsList').appendChild(card);
   updateInputsFooter();
@@ -1188,6 +1227,7 @@ function readInputs() {
       yellowDelaySec: Number(card.querySelector('.in-yellow').value) || 0,
       frozenSec: card.querySelector('.in-frozen-on').checked ? Number(card.querySelector('.in-frozen-sec').value) || 60 : 0,
       frozenToleranceDb: Number(card.querySelector('.in-frozen-tol').value) || 1,
+      microSilences: card.querySelector('.in-micro').value,
       schedule: readSchedule(card)
     };
   });
@@ -1345,6 +1385,7 @@ function fillForm() {
   $('gAwake').checked = s.general.keepAwake;
   $('gUpd').checked = s.general.checkUpdates;
   $('gRet').value = s.general.retentionDays;
+  $('gMicroOn').checked = s.general.microSilences !== false;
   $('gMicro').value = s.general.microRetentionDays;
   $('gInst').value = s.installationName;
   $('gInst').placeholder = info.host || '';
@@ -1410,7 +1451,7 @@ function readForm() {
     installationName: $('gInst').value.trim(),
     heartbeat: { enabled: $('hEnable').checked, url: $('hUrl').value.trim(), intervalMin: Number($('hMin').value) || 5 },
     display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked, wallNameSize: $('dName').value, wallLogo: $('dLogo').value, wallLogoOpacity: (Number($('dLogoOp').value) || 20) / 100, wallClock: $('dClock').value },
-    general: { startOnBoot: $('gBoot').checked, startMinimized: $('gMin').checked, autoStartMonitoring: $('gAuto').checked, keepAwake: $('gAwake').checked, checkUpdates: $('gUpd').checked, retentionDays: Number($('gRet').value) || 365, microRetentionDays: Number($('gMicro').value) || 30 }
+    general: { startOnBoot: $('gBoot').checked, startMinimized: $('gMin').checked, autoStartMonitoring: $('gAuto').checked, keepAwake: $('gAwake').checked, checkUpdates: $('gUpd').checked, retentionDays: Number($('gRet').value) || 365, microSilences: $('gMicroOn').checked, microRetentionDays: Number($('gMicro').value) || 30 }
   };
 }
 
@@ -1900,6 +1941,19 @@ function wire() {
   for (const b of document.querySelectorAll('.nav__item')) b.addEventListener('click', () => showView(b.dataset.view));
   $('startBtn').addEventListener('click', onStartClick);
   $('wallBtn').addEventListener('click', () => setWall(true));
+  for (const b of document.querySelectorAll('.js-compact')) {
+    b.addEventListener('click', async () => {
+      settings = await api.window.setView('compact', !settings.window.compact);
+      applyDisplay();
+      renderAll();
+    });
+  }
+  for (const b of document.querySelectorAll('.js-top')) {
+    b.addEventListener('click', async () => {
+      settings = await api.window.setView('alwaysOnTop', !settings.window.alwaysOnTop);
+      applyDisplay();
+    });
+  }
   $('wallExit').addEventListener('click', () => setWall(false));
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && openMenu) closePauseMenu();
@@ -2055,6 +2109,9 @@ function wire() {
   });
   api.on.settingsChanged((s) => {
     settings = s;
+    applyDisplay(); // the compact view or always on top changed from the tray menu
+    renderKpis();
+    renderTiles(); // micro-silences switched on or off
     chartInput = fillInputSelect($('chartInput'), chartInput);
     logInput = fillInputSelect($('logInput'), logInput);
     if (!dirty) fillForm();

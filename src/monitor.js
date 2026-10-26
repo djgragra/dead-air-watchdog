@@ -8,6 +8,7 @@ import { inputLabel, buildAlert, buildGroupAlert } from './messages.js';
 import { createGrouper } from './grouping.js';
 import { createFrozenDetector } from './core/frozen.js';
 import { activeRule, windowEnd } from './core/schedule.js';
+import { microSilencesOn } from './store.js';
 
 export const TICK_MS = 250;
 const STALE_MS = 1500; // no level report for this long = the input delivers nothing
@@ -53,7 +54,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function makeChannel(inp, t) {
     return {
       id: inp.id,
-      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, yellowDelayMs: inp.yellowDelaySec * 1000, blips: true }),
+      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) }),
       frozen: frozenOf(inp), // frozen audio: only fed when the input has frozenSec > 0
       frozenEventId: null,
       eff: effective(inp, t),
@@ -126,6 +127,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       log(`${label}: recovered after ${Math.round(ev.durationMs / 1000)} s`, 'info');
       publish.events();
     } else if (ev.type === 'blip') {
+      if (!microSilencesOn(settings(), inp)) return; // switched off (General, or for this input)
       // a drop below the threshold that ended before the alarm: kept in the log, never sent anywhere
       store.addEvent({ kind: 'blip', cause: ev.cause, start: ev.start, end: ev.end, input: label, inputId: inp.id, thresholdDb, minSilenceSec });
       publish.events();
@@ -407,7 +409,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));
         else {
-          ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000 });
+          ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) });
           ch.frozen.configure({ frozenMs: (inp.frozenSec || 0) * 1000, toleranceDb: inp.frozenToleranceDb });
           if (!inp.frozenSec) {
             const ended = ch.frozen.reset(t);

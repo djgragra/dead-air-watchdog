@@ -56,10 +56,10 @@ const settings = (theme) => ({
     updateAlert: true,
     grouping: { enabled: true, windowSec: 60, firstNow: true }
   },
-  general: { startOnBoot: true, startMinimized: false, autoStartMonitoring: true, keepAwake: true, retentionDays: 365, microRetentionDays: 30, checkUpdates: true, updateRepo: 'djgragra/dead-air-watchdog' },
+  general: { microSilences: true, startOnBoot: true, startMinimized: false, autoStartMonitoring: true, keepAwake: true, retentionDays: 365, microRetentionDays: 30, checkUpdates: true, updateRepo: 'djgragra/dead-air-watchdog' },
   heartbeat: { enabled: true, url: 'https://ping.example.org/demo', intervalMin: 5 },
   micExplained: true, closeHintShown: true,
-  updateState: { skipVersion: '', remindUntil: 0, lastCheck: { at: NOW - 3 * 3600_000, ok: true, error: '' } }, lastSeenVersion: '', window: { x: null, y: null, width: 1180, height: 780, maximized: false }
+  updateState: { skipVersion: '', remindUntil: 0, lastCheck: { at: NOW - 3 * 3600_000, ok: true, error: '' } }, lastSeenVersion: '', window: { x: null, y: null, width: 1180, height: 780, compact: false, alwaysOnTop: false, maximized: false }
 });
 const mkStatus = (names) => ({
   running: true, overall: 'alarm', counts: { ok: 2, counting: 0, alarm: 1, starting: 0 }, startedAt: NOW - 3 * 3600_000 - 12 * MIN,
@@ -128,6 +128,7 @@ const initScript = ({ settings, status, events, daily, APP_VERSION, extra }) => 
     events: { list: resolved(events), export: resolved({ ok: false }), clear: resolved() },
     stats: { daily: resolved(daily) },
     wall: { set: resolved() },
+    window: { setView: (key, on) => Promise.resolve({ ...settings, window: { ...settings.window, [key]: on } }) },
     audio: { devices: resolved({ granted: true, devices: [] }), accessStatus: resolved('granted'), testSound: resolved() },
     notifications: { test: resolved({ ok: true }) },
     backup: { export: resolved({ ok: true, file: 'C:\\Users\\Demo\\Documents\\dead-air-watchdog-backup-2026-10-11.json' }), import: resolved({ ok: false, canceled: true }) },
@@ -159,13 +160,13 @@ const bigSetup = (n, theme) => {
 const APP_VERSION = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version; // the version shown in the window
 const { chromium } = loadPlaywright();
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || undefined });
-async function shoot(file, theme, steps, st = status, cfg = null, extra = {}) {
-  const ctx = await browser.newContext({ viewport: { width: 1240, height: 800 }, deviceScaleFactor: 2, colorScheme: theme === 'light' ? 'light' : 'dark' });
+async function shoot(file, theme, steps, st = status, cfg = null, extra = {}, size = { width: 1240, height: 800 }) {
+  const ctx = await browser.newContext({ viewport: size, deviceScaleFactor: 2, colorScheme: theme === 'light' ? 'light' : 'dark' });
   const page = await ctx.newPage();
   page.on('pageerror', (e) => console.error('page error:', e.message));
   await page.addInitScript(initScript, { settings: cfg || settings(theme), status: st, events, daily, APP_VERSION, extra });
   await page.goto(`${base}/renderer/index.html`);
-  await page.waitForSelector('.nav__item');
+  await page.waitForSelector('.nav__item', { state: 'attached' });
   await page.waitForTimeout(400);
   await steps(page);
   await page.waitForTimeout(250);
@@ -251,5 +252,23 @@ await shoot('16-settings-general.png', 'light', async (page) => {
   await view(page, 'settings');
   await page.click('.tab[data-tab="general"]');
 });
+// ---- 26.10.11: compact view and micro-silences switched off for one input ----
+const compactCfg = settings('dark');
+compactCfg.window = { ...compactCfg.window, compact: true, alwaysOnTop: true };
+await shoot('19-compact-view.png', 'dark', async (page) => {
+  await levels(page);
+}, status, compactCfg, {}, { width: 400, height: 190 });
+const microCfg = settings('dark');
+microCfg.general.microSilences = true;
+microCfg.inputs[1].microSilences = 'off';
+await shoot('20-micro-silences-off.png', 'light', async (page) => {
+  await view(page, 'settings');
+  await page.evaluate(() => {
+    const card = document.querySelectorAll('#inputsList .input')[1];
+    card.setAttribute('open', '');
+    card.querySelector('.input__adv').setAttribute('open', '');
+    card.querySelector('.in-micro').scrollIntoView({ block: 'center' });
+  });
+}, status, microCfg);
 await browser.close();
 server.close();
