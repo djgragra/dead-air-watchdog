@@ -42,6 +42,8 @@ The **Dashboard** shows one big traffic light with the worst state of all the in
 
 On each tile, **Pause alerts for this input** switches the alerts of that input off for 1 hour or until tomorrow at 06:00 (for maintenance). The pause ends by itself, survives a restart and is written in the log; the input is still measured and shown as PAUSED.
 
+**Compact view** (button *Compact view* at the bottom of the side bar, or in the tray menu) turns the window into a small one for a screen full of other programs: no side bar and no summary, one row per input with its name, its state and two thin level meters, and a smallest window of about 280 × 110 pixels. *Normal view* (in the same place and in the top bar) brings the window back to its size and place. **Always on top** keeps the window above the others, in either view. Both choices, and the place and size of each view, are remembered. Nothing changes in the detection or in the alerts; the wall display always uses the whole screen as before.
+
 The **Wall display** is for an always-on screen in a newsroom or a studio: full screen, the screen kept awake, the clock and date as large as the screen allows, one large tile per input (from 1 to 32; the tiles rearrange to fit) and a glow around the screen edge when something is wrong. In *Settings → General → Display* you choose the glow (only in wall display, always, off), the size of the names (automatic, large, medium, small), the logos (small next to the name, large, or a soft background) and whether the app opens straight in the wall display.
 
 ## Alerts
@@ -62,7 +64,7 @@ All passwords, tokens and addresses are stored encrypted with the system keystor
 
 The **Event log** lists, for each input, the start, the end, the duration, the cause (silence, input offline, frozen audio) and the note; also the periods when nothing was monitored (app closed, computer asleep), the **pauses** and the **micro-silences**. Filter it by type or by input, and *Export CSV* or *Export JSON*. *Clear log…* deletes everything after confirmation. A **chart** shows the dead air per day over 7, 14 or 30 days, for all the inputs or one.
 
-- **Micro-silences**: every drop below the threshold, however short, is logged with its time, duration and cause, counted per input and in total for today, and kept for 30 days by default. No alert is sent for them and the alarm rule does not change: they help you tune the threshold and tell a fault of the program from one of the stream or of the network.
+- **Micro-silences**: every drop below the threshold, however short, is logged with its time, duration and cause, counted per input and in total for today, and kept for 30 days by default. No alert is sent for them and the alarm rule does not change: they help you tune the threshold and tell a fault of the program from one of the stream or of the network. With spoken-word channels, or music without crossfades, they can fill the log: switch them off in *Settings → General → Write micro-silences in the event log* for all the inputs, or for one input in *Settings → Inputs → More options → Micro-silences in the log* (*Same as in General*, *Write them*, *Do not write them*). An input that has them off writes, counts and shows none, and the summary cannot use its micro-silences to tell a fault of the stream from one of the network; the ones already in the log stay until they expire. They are on by default.
 - **Summary and common problems**: for each input the availability (the share of the monitored time without dead air; the time the app was not running, the pauses and the hours switched off do not count), the number of alarms, the total and the longest dead air, for this month, last month or the last 7 or 30 days, with CSV export. When several inputs lose their data or go into alarm within 10 seconds of each other, the events are marked **Common problem**: probably the network or the computer, not the streams.
 
 ## Heartbeat
@@ -75,7 +77,7 @@ Settings are in tabs, in the same order as in every OnAir Garage app. Press *Sav
 
 | Tab | Content |
 |---|---|
-| General | Start the app when you sign in, start hidden in the tray, start monitoring when the app opens, keep the computer from sleeping while monitoring, how long to keep the event log and the micro-silences, the **name of this installation** (shown in the alerts), language and theme, check for updates, and the **Display** options of the wall display |
+| General | Start the app when you sign in, start hidden in the tray, start monitoring when the app opens, keep the computer from sleeping while monitoring, whether to write the micro-silences in the log and how long to keep them, how long to keep the event log, the **name of this installation** (shown in the alerts), language and theme, check for updates, and the **Display** options of the wall display |
 | Inputs | The inputs, with their device or address, name, logo, threshold, time and options |
 | Alerts | Email, Telegram, HTTP, the sound, the repeat, the grouping, the wording of the alerts and the heartbeat |
 | Updates | The guided update (see below) |

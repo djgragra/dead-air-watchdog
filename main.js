@@ -4,7 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { createStore } from './src/store.js';
+import { createStore, COMPACT_MIN, NORMAL_MIN, compactHeightFor } from './src/store.js';
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
 import { sendWebhook } from './src/webhook.js';
@@ -63,6 +63,7 @@ let blockerId = null;
 let lastStatus = null;
 let updateInfo = null;
 let trayKey = '';
+let toggleWindowView = () => {}; // set in registerIpc: switches the compact view or always on top
 
 const lang = () => store.getSettings().language;
 const sendUi = (channel, data) => {
@@ -205,9 +206,12 @@ function fromEngine(channel, handler) {
 
 // ---- main window ------------------------------------------------------------------------
 // the saved window is used only if it still lies on a screen that exists (a monitor may have been unplugged)
-function savedBounds() {
-  const w = store.getSettings().window;
-  const out = { width: w.width, height: w.height };
+// Place and size saved for the window in the view it is in (normal or compact); the place only if it is still on a screen.
+function savedBounds(compact = compactApplied) {
+  const st = store.getSettings();
+  const w = compact ? st.compactWindow : st.window;
+  const height = compact && !w.height ? compactHeightFor(st.inputs.filter((i) => i.enabled).length) : w.height;
+  const out = { width: w.width, height };
   if (w.x !== null && w.y !== null) {
     const visible = screen.getAllDisplays().some((d) => w.x + 80 > d.bounds.x && w.x < d.bounds.x + d.bounds.width - 80 && w.y >= d.bounds.y && w.y < d.bounds.y + d.bounds.height - 80);
     if (visible) {
@@ -219,9 +223,14 @@ function savedBounds() {
 }
 
 let boundsTimer = null;
+let compactApplied = false; // the window is in the compact view (its size and smallest size are those of that view)
 function rememberWindow() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible() || mainWindow.isFullScreen()) return;
   const b = mainWindow.getNormalBounds(); // the place and size it has when not maximized
+  if (compactApplied) {
+    store.updateSettings({ compactWindow: { x: b.x, y: b.y, width: b.width, height: b.height } });
+    return;
+  }
   store.updateSettings({ window: { x: b.x, y: b.y, width: b.width, height: b.height, maximized: mainWindow.isMaximized() } });
 }
 const rememberWindowSoon = () => {
@@ -241,14 +250,36 @@ function restoreMenuBar() {
   setTimeout(show, 150); // once the window has finished leaving full screen
 }
 
+// "Always on top" and the compact view follow the settings (the buttons of the window, the tray menu, a backup that is imported).
+// Each view has its own size and place; the window goes back to those of the other one when the view changes.
+function applyWindowMode(next) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const w = next.window;
+  if (mainWindow.isAlwaysOnTop() !== w.alwaysOnTop) mainWindow.setAlwaysOnTop(w.alwaysOnTop, 'floating');
+  if (w.compact === compactApplied || mainWindow.isFullScreen()) return; // the wall display is full screen: the view changes after it
+  clearTimeout(boundsTimer);
+  rememberWindow(); // the place of the view that is being left
+  compactApplied = w.compact;
+  const min = compactApplied ? COMPACT_MIN : NORMAL_MIN;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  mainWindow.setMinimumSize(min.width, min.height);
+  const b = savedBounds();
+  const cur = mainWindow.getBounds();
+  mainWindow.setBounds({ x: b.x ?? cur.x, y: b.y ?? cur.y, width: b.width, height: b.height });
+  if (!compactApplied && store.getSettings().window.maximized) mainWindow.maximize();
+}
+
 function createWindow() {
   const settings = store.getSettings();
+  compactApplied = settings.window.compact;
+  const min = compactApplied ? COMPACT_MIN : NORMAL_MIN;
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 780,
     ...savedBounds(),
-    minWidth: 760,
-    minHeight: 560,
+    minWidth: min.width,
+    minHeight: min.height,
+    alwaysOnTop: settings.window.alwaysOnTop,
     show: false,
     backgroundColor: '#0f1115',
     title: 'Dead Air Watchdog',
@@ -262,7 +293,7 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   const hidden = settings.general.startMinimized && app.getLoginItemSettings().wasOpenedAtLogin;
   mainWindow.once('ready-to-show', () => {
-    if (settings.window.maximized) mainWindow.maximize();
+    if (settings.window.maximized && !compactApplied) mainWindow.maximize();
     if (!hidden) mainWindow.show();
   });
   for (const ev of ['resize', 'move', 'maximize', 'unmaximize']) mainWindow.on(ev, rememberWindowSoon);
@@ -272,6 +303,7 @@ function createWindow() {
       wallBlockerId = null;
     }
     restoreMenuBar();
+    applyWindowMode(store.getSettings()); // a change of view asked for during the wall display
     sendUi('event:wall-exit');
   });
   mainWindow.on('close', (e) => {
@@ -313,7 +345,8 @@ function updateTray(status) {
   if (!tray) return;
   const overall = status?.running ? status.overall : 'idle';
   const state = overall === 'starting' || overall === 'paused' ? 'idle' : overall;
-  const key = `${state}|${status?.running}|${lang()}|${status?.inputs?.length ?? 0}`;
+  const wv = store.getSettings().window;
+  const key = `${state}|${status?.running}|${lang()}|${status?.inputs?.length ?? 0}|${wv.compact}|${wv.alwaysOnTop}`;
   if (key === trayKey) return;
   trayKey = key;
   tray.setImage(trayImage(state));
@@ -323,6 +356,9 @@ function updateTray(status) {
     Menu.buildFromTemplate([
       { label: t(lang(), 'tray.open'), click: showWindow },
       { label: status?.running ? t(lang(), 'tray.stop') : t(lang(), 'tray.start'), click: () => (status?.running ? stopMonitoring() : startMonitoring()) },
+      { type: 'separator' },
+      { label: t(lang(), 'tray.compact'), type: 'checkbox', checked: wv.compact, click: () => toggleWindowView('compact') },
+      { label: t(lang(), 'tray.top'), type: 'checkbox', checked: wv.alwaysOnTop, click: () => toggleWindowView('alwaysOnTop') },
       { type: 'separator' },
       { label: t(lang(), 'tray.quit'), click: () => app.quit() }
     ])
@@ -454,6 +490,7 @@ function registerIpc() {
   function settingsChanged(next) {
     logos.prune(next.inputs.map((i) => i.id)); // logos of removed inputs
     applyGeneralSettings(next);
+    applyWindowMode(next);
     monitor.syncInputs(); // inputs added, removed or edited while monitoring
     if (!monitor.isRunning()) heartbeat.stop();
     heartbeat.restart();
@@ -467,6 +504,12 @@ function registerIpc() {
     return next;
   }
   handle('settings:update', (patch) => settingsChanged(store.updateSettings(patch)));
+  // compact view and always on top: one button each in the window, one item each in the tray menu; both are remembered
+  toggleWindowView = (key) => settingsChanged(store.updateSettings({ window: { [key]: !store.getSettings().window[key] } }));
+  handle('window:view', (key, on) => {
+    if (key !== 'compact' && key !== 'alwaysOnTop') throw new Error('unknown view');
+    return settingsChanged(store.updateSettings({ window: { [key]: !!on } }));
+  });
 
   // ---- configuration backup ----
   handle('backup:export', async (includeSecrets) => {
