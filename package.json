@@ -21,7 +21,7 @@
     "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "nodemailer": "^10.1.2"
+    "nodemailer": "^10.1.4"
   },
   "devDependencies": {
     "electron": "^44.9.0",
