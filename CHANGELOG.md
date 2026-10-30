@@ -8,6 +8,7 @@
 - **Compact view, narrow window.** The buttons stay on the first line and the status badge is the one that goes to the next line; in a very narrow window (about 250 px) the level bars give way, so the names are not cut. Thanks to Paul.
 - **Compact view, shorter window.** When the window gets shorter while the list is at its end, the end of the list stays in sight and the top rows go first. Thanks to Paul. Not tried on a real Windows PC.
 - **Wall display: logos of "Medium" size**, between the small one next to the name and the large one.
+- Dependencies updated: Electron 44.9.1, nodemailer 10.1.4, fast-uri 3.1.9, undici 6.29.1 (bug-fix releases).
 - Tests: new ones for the menu without "Zoom", the wheel zoom, the hidden menu bar, the right-click menu, the new sizes and the narrow compact layout (`dev/window-menu.test.js`). The menus and the window were not run on a real Windows PC.
 
 ## 26.10.11 — 2026-10-26
