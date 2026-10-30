@@ -1,6 +1,6 @@
 # Changelog
 
-## 26.10.12 — 2026-10-26
+## 26.10.12 — 2026-10-30
 
 - **Menu: "Window → Zoom" removed on Windows and Linux.** It did nothing there (it is a macOS command); the zoom of the page stays in the *View* menu (Ctrl +, Ctrl −, Ctrl 0) and now also works with Ctrl and the mouse wheel. Thanks to Paul, who found it and suggested the wheel.
 - **Menu bar hidden in the compact view (Windows and Linux).** *Settings → General → Display → Hide the menu bar in the compact view*, or an item in the tray menu. Right-click the compact window to bring it back (the menu also has the views, always on top and the zoom), or press Alt for a moment. Thanks to Paul, who suggested it.
