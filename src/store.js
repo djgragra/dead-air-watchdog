@@ -44,8 +44,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   display: {
     edgeGlow: 'wall', // screen-edge glow: 'wall' (only in wall display) | 'always' | 'off'
     startInWall: false, // open straight into the full-screen wall display (control-room monitor)
-    wallNameSize: 'auto', // size of the input names in the wall display: 'auto' (shrinks long names to fit) | 'large' | 'medium' | 'small'
-    wallLogo: 'large', // logo of an input in the wall display: 'small' | 'large' | 'faded' (big, soft, behind the tile)
+    wallNameSize: 'auto', // size of the input names in the wall display: 'auto' (shrinks long names to fit) | 'xlarge' | 'large' | 'medium' | 'small'
+    wallLogo: 'large', // logo of an input in the wall display: 'small' | 'medium' | 'large' | 'faded' (big, soft, behind the tile)
     wallLogoOpacity: 0.2, // how strong the 'faded' logo is (0.05 to 0.5)
     wallClock: 'max' // size of the clock and date in the wall display: 'max' (as large as fits) | 'large' | 'normal'
   },
@@ -76,7 +76,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   closeHintShown: false,
   updateState: { skipVersion: '', remindUntil: 0, lastCheck: null }, // what the user decided about a new version; lastCheck { at, ok, error }
   lastSeenVersion: '', // the version that last ran: a newer one at start-up means "updated" (What's new window)
-  window: { x: null, y: null, width: 1180, height: 780, maximized: false, compact: false, alwaysOnTop: false }, // remembered place and size of the main window, and its view (compact, always on top)
+  window: { x: null, y: null, width: 1180, height: 780, maximized: false, compact: false, alwaysOnTop: false, hideMenuBar: false }, // remembered place and size of the main window, and its view (compact, always on top, menu bar hidden in the compact view)
   compactWindow: { x: null, y: null, width: 380, height: 0 } // place and size of the compact view (height 0 = from the number of inputs)
 });
 
@@ -157,8 +157,8 @@ export function sanitizeSettings(s) {
   if (!['dark', 'light', 'auto'].includes(out.theme)) out.theme = d.theme;
   if (!['wall', 'always', 'off'].includes(out.display.edgeGlow)) out.display.edgeGlow = d.display.edgeGlow;
   out.display.startInWall = !!out.display.startInWall;
-  if (!['auto', 'large', 'medium', 'small'].includes(out.display.wallNameSize)) out.display.wallNameSize = d.display.wallNameSize;
-  if (!['small', 'large', 'faded'].includes(out.display.wallLogo)) out.display.wallLogo = d.display.wallLogo;
+  if (!['auto', 'xlarge', 'large', 'medium', 'small'].includes(out.display.wallNameSize)) out.display.wallNameSize = d.display.wallNameSize;
+  if (!['small', 'medium', 'large', 'faded'].includes(out.display.wallLogo)) out.display.wallLogo = d.display.wallLogo;
   out.display.wallLogoOpacity = Math.round(clamp(out.display.wallLogoOpacity, 0.05, 0.5, d.display.wallLogoOpacity) * 100) / 100;
   if (!['max', 'large', 'normal'].includes(out.display.wallClock)) out.display.wallClock = d.display.wallClock;
   out.installationName = String(out.installationName || '').trim().slice(0, 60);
@@ -201,7 +201,7 @@ export function sanitizeSettings(s) {
   out.lastSeenVersion = String(out.lastSeenVersion || '').slice(0, 40);
   const w = isObj(out.window) ? out.window : {};
   const hasPos = Number.isFinite(w.x) && Number.isFinite(w.y);
-  out.window = { x: hasPos ? Math.round(w.x) : null, y: hasPos ? Math.round(w.y) : null, width: Math.round(clamp(w.width, 760, 8000, 1180)), height: Math.round(clamp(w.height, 560, 8000, 780)), maximized: !!w.maximized, compact: !!w.compact, alwaysOnTop: !!w.alwaysOnTop };
+  out.window = { x: hasPos ? Math.round(w.x) : null, y: hasPos ? Math.round(w.y) : null, width: Math.round(clamp(w.width, 760, 8000, 1180)), height: Math.round(clamp(w.height, 560, 8000, 780)), maximized: !!w.maximized, compact: !!w.compact, alwaysOnTop: !!w.alwaysOnTop, hideMenuBar: !!w.hideMenuBar };
   const cw = isObj(out.compactWindow) ? out.compactWindow : {};
   const cPos = Number.isFinite(cw.x) && Number.isFinite(cw.y);
   out.compactWindow = { x: cPos ? Math.round(cw.x) : null, y: cPos ? Math.round(cw.y) : null, width: Math.round(clamp(cw.width, COMPACT_MIN.width, 8000, 380)), height: Number(cw.height) > 0 ? Math.round(clamp(cw.height, COMPACT_MIN.height, 8000, COMPACT_MIN.height)) : 0 };

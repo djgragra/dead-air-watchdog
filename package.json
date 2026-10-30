@@ -1,7 +1,7 @@
 {
   "name": "dead-air-watchdog",
   "productName": "Dead Air Watchdog",
-  "version": "26.10.11",
+  "version": "26.10.12",
   "description": "Monitors an audio input or an Icecast/Shoutcast stream and alerts by email and Telegram when it stays silent",
   "main": "main.js",
   "type": "module",
@@ -21,10 +21,10 @@
     "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "nodemailer": "^10.1.2"
+    "nodemailer": "^10.1.4"
   },
   "devDependencies": {
-    "electron": "^44.9.0",
+    "electron": "^44.9.1",
     "electron-builder": "^26.15.3"
   },
   "build": {

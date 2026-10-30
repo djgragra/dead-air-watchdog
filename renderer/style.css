@@ -411,6 +411,7 @@ body.wall .tile > * { position: relative; }
 body.wall .tile__pause, body.wall .tile__blips { display: none; }
 body.wall .tile__head { gap: clamp(4px, 2cqmin, 12px); }
 body.wall .tile__name { --name-scale: 1; font-size: calc(clamp(10px, 7cqmin, 38px) * var(--name-scale)); line-height: 1.15; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+body.wall[data-wallname="xlarge"] .tile__name { --name-scale: 1.4; } /* the line at the top keeps its size: it would cut a long name */
 body.wall[data-wallname="medium"] .tile__name, body.wall[data-wallname="medium"] .wallhead__state { --name-scale: .78; }
 body.wall[data-wallname="small"] .tile__name, body.wall[data-wallname="small"] .wallhead__state { --name-scale: .6; }
 body.wall .tile__type { font-size: clamp(8px, 3.5cqmin, 12px); }
@@ -429,10 +430,12 @@ body.wall .tile .meter__ch { font-size: clamp(8px, 4cqmin, 16px); }
 /* wall display: the logo of an input. small = next to the name; large = a big column at the left of the tile;
    faded = the logo big and soft behind the text (strength in Settings). A logo with transparency has no box. */
 body.wall .tile__logo { width: clamp(18px, 12cqmin, 84px); height: clamp(18px, 12cqmin, 84px); }
-body.wall[data-walllogo="large"] .tile__logo, body.wall[data-walllogo="faded"] .tile__logo { display: none; }
-body.wall[data-walllogo="large"] .tile.has-logo { display: grid; grid-template-columns: minmax(0, 36%) minmax(0, 1fr); align-items: center; column-gap: clamp(8px, 3cqmin, 24px); }
-body.wall[data-walllogo="large"] .tile.has-logo .tile__art { display: flex; align-items: center; justify-content: center; min-width: 0; height: 100%; }
-body.wall[data-walllogo="large"] .tile.has-logo .tile__art img { max-width: 100%; max-height: 86cqh; object-fit: contain; border-radius: clamp(4px, 2cqmin, 12px); }
+body.wall { --logo-col: 36%; --logo-h: 86cqh; }
+body.wall[data-walllogo="medium"] { --logo-col: 22%; --logo-h: 58cqh; } /* medium = a column between the small logo next to the name and the large one */
+body.wall:is([data-walllogo="large"], [data-walllogo="medium"]) .tile__logo, body.wall[data-walllogo="faded"] .tile__logo { display: none; }
+body.wall:is([data-walllogo="large"], [data-walllogo="medium"]) .tile.has-logo { display: grid; grid-template-columns: minmax(0, var(--logo-col)) minmax(0, 1fr); align-items: center; column-gap: clamp(8px, 3cqmin, 24px); }
+body.wall:is([data-walllogo="large"], [data-walllogo="medium"]) .tile.has-logo .tile__art { display: flex; align-items: center; justify-content: center; min-width: 0; height: 100%; }
+body.wall:is([data-walllogo="large"], [data-walllogo="medium"]) .tile.has-logo .tile__art img { max-width: 100%; max-height: var(--logo-h); object-fit: contain; border-radius: clamp(4px, 2cqmin, 12px); }
 body.wall[data-walllogo="faded"] .tile.has-logo::before { content: ""; position: absolute; inset: 0; background: var(--tile-logo) center / 62% no-repeat; opacity: var(--logo-op, .2); -webkit-mask-image: radial-gradient(closest-side, #000 38%, transparent 100%); mask-image: radial-gradient(closest-side, #000 38%, transparent 100%); pointer-events: none; }
 body.wall.idle-cursor, body.wall.idle-cursor * { cursor: none; }
 
@@ -507,6 +510,9 @@ body.compact:not(.wall) .topbar .view-only-compact { display: inline-flex; }
 body.compact:not(.wall) .side, body.compact:not(.wall) .hero, body.compact:not(.wall) #kpis, body.compact:not(.wall) #grid2, body.compact:not(.wall) #setupCard, body.compact:not(.wall) .update, body.compact:not(.wall) .wallhead, body.compact:not(.wall) .topbar .clock, body.compact:not(.wall) .topbar .inputw, body.compact:not(.wall) .topbar .uptime, body.compact:not(.wall) #wallBtn { display: none !important; }
 body.compact:not(.wall) .app { display: block; }
 body.compact:not(.wall) .topbar { gap: 6px; padding: 6px 8px; }
+/* narrow window: the buttons stay on the first line and the status badge is the one that goes to the next line (it comes last) */
+body.compact:not(.wall) .topbar .pill { order: 9; flex: 0 0 auto; }
+body.compact:not(.wall) .topbar .btn { flex: 0 1 auto; white-space: nowrap; }
 body.compact:not(.wall) .topbar .btn { padding: 3px 8px; font-size: 12px; }
 body.compact:not(.wall) .topbar .pill { padding: 2px 8px; font-size: 12px; }
 body.compact:not(.wall) #view-dashboard { padding: 6px 8px; gap: 6px; }
@@ -523,3 +529,10 @@ body.compact:not(.wall) .tile__body > .meter__row { grid-column: 3; margin: 1px 
 body.compact:not(.wall) .tile__body > .meter__row:nth-last-child(2) { grid-row: 1; }
 body.compact:not(.wall) .tile__body > .meter__row:last-child { grid-row: 2; }
 body.compact:not(.wall) .tile .meter__track { height: 6px; }
+@media (max-width: 250px) { /* very narrow: the names and the state get the width, the level bars go */
+  body.compact:not(.wall) .tile__body { grid-template-columns: minmax(0, 1fr) auto; }
+  body.compact:not(.wall) .tile__body > .meter__row, body.compact:not(.wall) .tile__sub { display: none; }
+  body.compact:not(.wall) .tile__head { grid-row: 1; }
+  body.compact:not(.wall) .tile__state { grid-column: 1; grid-row: 2; text-align: left; font-size: 12px; }
+  body.compact:not(.wall) .topbar .btn { padding: 2px 6px; }
+}

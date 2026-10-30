@@ -1399,6 +1399,7 @@ function fillForm() {
   $('dLogo').value = s.display.wallLogo;
   $('dLogoOp').value = Math.round(s.display.wallLogoOpacity * 100);
   $('dClock').value = s.display.wallClock;
+  $('dHideBar').checked = !!s.window.hideMenuBar;
   syncDisplayFields();
   resetEyes();
   setDirty(false);
@@ -1970,6 +1971,10 @@ function wire() {
   addEye($('mPass'));
   addEye($('tToken'));
   $('dLogo').addEventListener('change', syncDisplayFields);
+  if (/Mac/.test(navigator.platform || '')) $('dHideBarField').classList.add('hidden'); // macOS has its menu bar at the top of the screen
+  $('dHideBar').addEventListener('change', async () => { // takes effect at once, like the other switches of the window
+    settings = await api.window.setView('hideMenuBar', $('dHideBar').checked);
+  });
   for (const b of document.querySelectorAll('[data-days]')) {
     b.addEventListener('click', () => {
       chartDays = Number(b.dataset.days);
@@ -2122,6 +2127,14 @@ function wire() {
   });
   api.on.delivery(renderDelivery);
   window.addEventListener('resize', () => requestAnimationFrame(() => { fitWallGrid(); fitWallNames(); }));
+  // Compact view: making the window shorter keeps the end of the list in sight (the top rows go first, the bar on top stays);
+  // a list that was not scrolled behaves as one that is at its end.
+  const scroller = document.querySelector('.main');
+  let atEnd = true;
+  scroller.addEventListener('scroll', () => { atEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2; });
+  window.addEventListener('resize', () => {
+    if (document.body.classList.contains('compact') && !wall && atEnd) scroller.scrollTop = scroller.scrollHeight;
+  });
   api.on.updateProgress(({ got, total }) => {
     if (upd.phase !== 'downloading') return;
     upd.got = got;
