@@ -61,6 +61,8 @@ By Graziano Melzi · [OnAir Garage](https://onairgarage.com) — contact: hello@
 
 Invented data only (no real streams, names or addresses). Taken with Chromium on the real window files with a stand-in for the Electron bridge, not from the packaged app: `node dev/make-screenshots.mjs`.
 
+<a href="https://ko-fi.com/F8V328ADFH"><img height="36" src="https://storage.ko-fi.com/cdn/kofi6.png?v=6" alt="Buy Me a Coffee at ko-fi.com"></a>
+
 ## Install
 
 Download the installer for your system from the [Releases](https://github.com/djgragra/dead-air-watchdog/releases) page and verify it against `SHA256SUMS.txt`. The app is free and **not code-signed**:
@@ -194,3 +196,11 @@ App gratuita che ascolta giorno e notte un ingresso audio del computer o uno str
 ## License
 
 [MIT](LICENSE) © 2026 Graziano Melzi
+
+## Support
+
+This tool is free and will stay free, with source code. If it saved your day, you can leave a tip on Ko-fi: a thank-you, nothing more.
+
+<a href="https://ko-fi.com/F8V328ADFH"><img height="36" src="https://storage.ko-fi.com/cdn/kofi6.png?v=6" alt="Buy Me a Coffee at ko-fi.com"></a>
+
+*Italiano:* lo strumento è gratuito e resta tale, con il codice sorgente. Se ti ha salvato la giornata puoi lasciare una mancia su Ko-fi: un grazie e basta.
