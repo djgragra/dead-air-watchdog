@@ -21,11 +21,11 @@
     "dist:linux": "electron-builder --linux"
   },
   "dependencies": {
-    "nodemailer": "^10.1.4"
+    "nodemailer": "^10.3.1"
   },
   "devDependencies": {
     "electron": "^44.9.1",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "com.onairgarage.deadairwatchdog",
