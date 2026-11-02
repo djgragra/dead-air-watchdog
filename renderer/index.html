@@ -11,7 +11,7 @@
 <div class="edge" id="edge" data-state="idle" aria-hidden="true"></div>
 <div class="app">
   <aside class="side">
-    <div class="brand">
+    <div class="brand" id="brandLink" role="link" tabindex="0">
       <img class="brand__icon" src="logo.svg" alt="" width="38" height="38" />
       <div>
         <div class="brand__title" data-i18n="app.title">Dead Air Watchdog</div>
@@ -317,6 +317,7 @@
           <p class="testres" id="updRes" role="status"></p>
           <div class="row" id="updActions"><button type="button" class="btn btn--small" id="updCheck" data-i18n="upd.check">Check now</button><span class="update__btns" id="updCardBtns"></span></div>
           <p class="hint" data-i18n="upd.note2"></p>
+          <p class="links"><button type="button" class="link" id="updSite" data-i18n="upd.site"></button></p>
         </fieldset>
         </div>
         <div class="tabpane" data-pane="backup">

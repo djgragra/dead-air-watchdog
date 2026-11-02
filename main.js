@@ -253,6 +253,19 @@ function restoreMenuBar() {
   setTimeout(show, 150); // once the window has finished leaving full screen
 }
 
+// Application menu (Windows and Linux): rebuilt when the view or the language changes, so the checks of the Window menu are right.
+let appMenuKey = '';
+function applyAppMenu() {
+  if (process.platform === 'darwin') return;
+  const win = store ? store.getSettings().window : null;
+  const key = `${store ? lang() : ''}|${win?.compact}|${win?.alwaysOnTop}`;
+  if (key === appMenuKey) return;
+  appMenuKey = key;
+  const ctx = win ? { win, tr: (k) => t(lang(), k), act: { toggle: (k) => toggleWindowView(k) } } : undefined;
+  Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate(process.platform, ctx)));
+  if (mainWindow && !mainWindow.isDestroyed()) restoreMenuBar(); // setting the menu shows the bar again: keep it hidden on purpose
+}
+
 // Zoom of the page ('in' | 'out' | 'reset'), the same one as Ctrl +, Ctrl - and Ctrl 0 of the View menu (Chromium remembers it).
 function zoomWindow(direction) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -524,6 +537,7 @@ function registerIpc() {
     pushStatus();
     trayKey = '';
     updateTray(lastStatus);
+    applyAppMenu();
     sendUi('event:settings-changed', next);
     announceUpdate(); // a channel switched on now hears about a version it has not been told yet
     return next;
@@ -811,8 +825,7 @@ function announceStartup() {
 }
 
 app.whenReady().then(() => {
-  const menuTemplate = appMenuTemplate(process.platform);
-  if (menuTemplate) Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate)); // the default menu without the "Zoom" entry that does nothing
+  applyAppMenu(); // the default menu without the "Zoom" entry that does nothing (the Window menu gets its switches once the settings are loaded)
   hadSettingsFile = fs.existsSync(settingsFile());
   store = createStore({ file: settingsFile(), seal, open });
   // rewrite secrets saved before the keystore was available
@@ -888,6 +901,7 @@ app.whenReady().then(() => {
   createEngineWindow(0);
   createWindow();
   createTray();
+  applyAppMenu(); // now with the settings: the Window menu gets "Compact view" and "Always on top"
   applyGeneralSettings(store.getSettings());
 
   clog(`Dead Air Watchdog ${app.getVersion()} started (${process.platform} ${process.arch}, Electron ${process.versions.electron})`, 'info', 'app');

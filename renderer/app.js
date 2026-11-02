@@ -1,7 +1,7 @@
 // Dead Air Watchdog — window logic. The window never touches audio or secrets directly:
 // it talks to the main process through window.api (see preload.cjs).
 // © 2026 Graziano Melzi · OnAir Garage — MIT License
-import { LANGS, makeT, tipUrl } from './i18n.js';
+import { LANGS, makeT, tipUrl, siteUrl } from './i18n.js';
 import { TEMPLATE_KINDS, TEMPLATE_VARS } from '../src/messages.js';
 import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
@@ -127,6 +127,7 @@ function applyI18n() {
   for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
   $('aboutText').textContent = t('help.pAbout', { v: info.version });
   document.title = t('app.title');
+  $('brandLink').title = t('brand.tip');
   for (const b of document.querySelectorAll('.pw__eye')) b._reset?.();
 }
 
@@ -2099,6 +2100,11 @@ function wire() {
   });
   for (const b of document.querySelectorAll('[data-ext]')) b.addEventListener('click', () => api.app.openExternal(b.dataset.ext));
   // The jar is a second link to the same page; keyboard and screen readers keep the button.
+  // The page of the app on the site: a link in the Updates page and the logo at the top of the side bar (also with the keyboard).
+  $('updSite').addEventListener('click', () => api.app.openExternal(siteUrl(lang)));
+  const openSite = () => api.app.openExternal(siteUrl(lang));
+  $('brandLink').addEventListener('click', openSite);
+  $('brandLink').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSite(); } });
   for (const id of ['tipBtn', 'tipJar']) $(id).addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
 
   api.on.status((st) => {
@@ -2129,11 +2135,17 @@ function wire() {
   window.addEventListener('resize', () => requestAnimationFrame(() => { fitWallGrid(); fitWallNames(); }));
   // Compact view: making the window shorter keeps the end of the list in sight (the top rows go first, the bar on top stays);
   // a list that was not scrolled behaves as one that is at its end.
-  const scroller = document.querySelector('.main');
+  // The scroller of the compact view is the page itself (see the compact rules in style.css), at every width.
+  const pageScroller = () => document.scrollingElement || document.documentElement;
   let atEnd = true;
-  scroller.addEventListener('scroll', () => { atEnd = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 2; });
+  window.addEventListener('scroll', () => {
+    const s = pageScroller();
+    atEnd = s.scrollTop + s.clientHeight >= s.scrollHeight - 2;
+  }, { passive: true });
   window.addEventListener('resize', () => {
-    if (document.body.classList.contains('compact') && !wall && atEnd) scroller.scrollTop = scroller.scrollHeight;
+    if (!document.body.classList.contains('compact') || wall) return;
+    const s = pageScroller();
+    if (atEnd) s.scrollTop = s.scrollHeight;
   });
   api.on.updateProgress(({ got, total }) => {
     if (upd.phase !== 'downloading') return;

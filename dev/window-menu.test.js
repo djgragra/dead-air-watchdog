@@ -91,7 +91,57 @@ test('compact view: the status badge is the item that goes to the next line, the
   assert.match(css, /@media \(max-width: 250px\)/);
 });
 
-test('compact view: the end of the list stays in sight when the window gets shorter', () => {
+test('compact view: the page is the only scroller at every width and the end of the list stays in sight', () => {
   const js = read('../renderer/app.js');
-  assert.match(js, /scroller\.scrollTop = scroller\.scrollHeight/);
+  assert.match(js, /pageScroller/);
+  assert.match(js, /s\.scrollTop = s\.scrollHeight/);
+  assert.ok(!/scroller\.scrollTop = scroller\.scrollHeight/.test(js), 'no more scrolling of .main in the compact view');
+  const css = read('../renderer/style.css');
+  assert.match(css, /body\.compact:not\(\.wall\) \{ height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; \}/);
+  assert.match(css, /body\.compact:not\(\.wall\) \.topbar \{ position: static; \}/); // the top bar scrolls away first
+  assert.match(css, /body\.compact:not\(\.wall\) \.main \{ overflow: visible; \}/);
+});
+
+// ---- 26.11.1 ----
+test('Window menu: with the switches of the window (compact view, always on top), as the tray menu has them', () => {
+  const calls = [];
+  const ctx = { win: { compact: true, alwaysOnTop: false }, tr: (k) => `T:${k}`, act: { toggle: (k) => calls.push(k) } };
+  for (const platform of ['win32', 'linux']) {
+    const win = appMenuTemplate(platform, ctx).find((m) => m.label === 'Window');
+    assert.deepEqual(win.submenu.map((i) => i.role || (i.type === 'separator' ? 'separator' : i.label)), ['minimize', 'close', 'separator', 'T:tray.compact', 'T:tray.top']);
+    assert.equal(win.submenu[3].checked, true);
+    assert.equal(win.submenu[4].checked, false);
+    win.submenu[3].click();
+    win.submenu[4].click();
+  }
+  assert.deepEqual(calls, ['compact', 'alwaysOnTop', 'compact', 'alwaysOnTop']);
+  assert.equal(appMenuTemplate('darwin', ctx), null);
+});
+
+test('main process: the application menu is rebuilt when the view changes and takes the labels in the language of the app', () => {
+  const main = read('../main.js');
+  assert.match(main, /function applyAppMenu\(\)/);
+  assert.match(main, /appMenuTemplate\(process\.platform, ctx\)/);
+  assert.match(main, /updateTray\(lastStatus\);\n    applyAppMenu\(\);/); // after every settings change
+  assert.equal(MESSAGES.en['tray.compact'] !== undefined && MESSAGES.it['tray.top'] !== undefined && MESSAGES.es['tray.compact'] !== undefined, true);
+});
+
+test('link to the site: the page of the app in the language of the window, from the Updates page and the logo', async () => {
+  const { siteUrl } = await import('../renderer/i18n.js');
+  assert.equal(siteUrl('en'), 'https://onairgarage.com/tools/dead-air-watchdog/');
+  assert.equal(siteUrl('it'), 'https://onairgarage.com/it/tools/dead-air-watchdog/');
+  assert.equal(siteUrl('es'), 'https://onairgarage.com/es/tools/dead-air-watchdog/');
+  assert.equal(siteUrl('xx'), siteUrl('en'));
+  const html = read('../renderer/index.html');
+  assert.match(html, /id="updSite"/);
+  assert.match(html, /id="brandLink"/);
+  for (const lang of ['en', 'it', 'es']) {
+    assert.ok(STRINGS[lang]['upd.site'] && STRINGS[lang]['brand.tip'], lang);
+  }
+});
+
+test('Dashboard: the name of an input is bigger on the tile, the compact view keeps its own size', () => {
+  const css = read('../renderer/style.css');
+  assert.match(css, /\.tile__name \{ font-weight: 700; font-size: 19px;/);
+  assert.match(css, /body\.compact:not\(\.wall\) \.tile__name \{ font-size: 13px; \}/);
 });
