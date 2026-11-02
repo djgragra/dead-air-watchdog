@@ -15,9 +15,19 @@ export function nextZoomLevel(level, direction) {
 // Application menu: the same four menus as the default one of Electron, with the Window menu reduced to what works
 // ("Zoom" of the default Window menu is for macOS only; the zoom of the page is in the View menu).
 // macOS keeps its default menu (null: nothing to set).
-export function appMenuTemplate(platform) {
+// With `ctx` ({ win, tr, act }) the Window menu also has the two switches of the window ("Compact view", which is the way back to the
+// normal view, and "Always on top"), the same ones as the tray menu and the right-click menu.
+export function appMenuTemplate(platform, ctx) {
   if (platform === 'darwin') return null;
-  return [{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'close' }] }];
+  const windowMenu = [{ role: 'minimize' }, { role: 'close' }];
+  if (ctx) {
+    windowMenu.push(
+      { type: 'separator' },
+      { label: ctx.tr('tray.compact'), type: 'checkbox', checked: !!ctx.win?.compact, click: () => ctx.act.toggle('compact') },
+      { label: ctx.tr('tray.top'), type: 'checkbox', checked: !!ctx.win?.alwaysOnTop, click: () => ctx.act.toggle('alwaysOnTop') }
+    );
+  }
+  return [{ role: 'fileMenu' }, { role: 'editMenu' }, { role: 'viewMenu' }, { label: 'Window', submenu: windowMenu }];
 }
 
 // Is the menu bar hidden: only in the compact view, only where there is a menu bar in the window.

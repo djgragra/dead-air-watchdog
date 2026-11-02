@@ -471,6 +471,8 @@ export const STRINGS = {
     'upd.after.open-image': 'The disk image is open: drag Dead Air Watchdog to Applications, then open it again.',
     'upd.after.reveal': 'The AppImage is in your Downloads folder: make it executable and run it.',
     'upd.note2': 'Nothing is installed without your click. The download is checked against the SHA-256 published with the release.',
+    'upd.site': 'Page of the app on onairgarage.com',
+    'brand.tip': 'Open the page of the app on onairgarage.com',
     'whatsnew.title': 'Updated to version {v}',
     'whatsnew.sub': 'What’s new',
     'whatsnew.none': 'See the release notes for what changed in this version.',
@@ -966,6 +968,8 @@ export const STRINGS = {
     'upd.after.open-image': 'L’immagine disco è aperta: trascina Dead Air Watchdog in Applicazioni, poi riaprilo.',
     'upd.after.reveal': 'L’AppImage è nella cartella Download: rendila eseguibile e avviala.',
     'upd.note2': 'Non viene installato nulla senza un tuo clic. Il file scaricato è controllato con lo SHA-256 pubblicato con la release.',
+    'upd.site': 'Pagina dell\'app su onairgarage.com',
+    'brand.tip': 'Apri la pagina dell\'app su onairgarage.com',
     'whatsnew.title': 'Aggiornato alla versione {v}',
     'whatsnew.sub': 'Cosa c’è di nuovo',
     'whatsnew.none': 'Vedi le note di rilascio per cosa è cambiato in questa versione.',
@@ -1461,6 +1465,8 @@ export const STRINGS = {
     'upd.after.open-image': 'La imagen de disco está abierta: arrastra Dead Air Watchdog a Aplicaciones y ábrela de nuevo.',
     'upd.after.reveal': 'El AppImage está en la carpeta Descargas: hazlo ejecutable y lánzalo.',
     'upd.note2': 'No se instala nada sin tu clic. La descarga se comprueba con el SHA-256 publicado con la versión.',
+    'upd.site': 'Página de la app en onairgarage.com',
+    'brand.tip': 'Abrir la página de la app en onairgarage.com',
     'whatsnew.title': 'Actualizado a la versión {v}',
     'whatsnew.sub': 'Novedades',
     'whatsnew.none': 'Consulta las notas de la versión para ver qué cambió.',
@@ -1497,6 +1503,14 @@ export const TIP_URLS = {
   es: 'https://onairgarage.com/es/support/'
 };
 export const tipUrl = (lang) => TIP_URLS[lang] || TIP_URLS.en;
+
+// The page of the app on the site (installers, changelog, hashes), in the language of the window.
+export const SITE_URLS = {
+  en: 'https://onairgarage.com/tools/dead-air-watchdog/',
+  it: 'https://onairgarage.com/it/tools/dead-air-watchdog/',
+  es: 'https://onairgarage.com/es/tools/dead-air-watchdog/'
+};
+export const siteUrl = (lang) => SITE_URLS[lang] || SITE_URLS.en;
 
 export function makeT(lang) {
   const table = STRINGS[lang] || STRINGS.en;

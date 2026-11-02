@@ -1,5 +1,13 @@
 # Changelog
 
+## 26.11.1 — 2026-11-02
+
+- **Fix: compact view, shorter window.** With the window wider than about 820 pixels (at normal zoom) the compact view had no scrollbar at all, so the rows at the bottom were cut and could not be reached; below that width the scrollbar appeared and came and went with the zoom, and the end of the list did not stay in sight. Now the whole page scrolls, at every width and zoom: the top bar (buttons and status) goes first, and when the window gets shorter while the list is at its end, the end of the list stays in sight. Not tried on a real Windows PC. Thanks to Paul, who found the width at which it changes.
+- **Window menu: Compact view and Always on top** (Windows and Linux), next to *Minimise* and *Close*: *Compact view* is the way back to the normal view from the menu. Thanks to Paul, who suggested it.
+- **Link to the site.** The logo at the top of the side bar and a link in *Settings → Updates* open the page of the app on onairgarage.com, in the language of the app. Thanks to Paul, who suggested it.
+- **Dashboard: bigger names.** The name of each input on its tile is bigger (the compact view keeps its size). Thanks to Paul, who asked for it.
+- Tests: new ones for the scrolling of the compact view, the Window menu, the site links and the size of the names (`dev/window-menu.test.js`). The real window was not run on Windows.
+
 ## 26.10.12 — 2026-10-30
 
 - **Menu: "Window → Zoom" removed on Windows and Linux.** It did nothing there (it is a macOS command); the zoom of the page stays in the *View* menu (Ctrl +, Ctrl −, Ctrl 0) and now also works with Ctrl and the mouse wheel. Thanks to Paul, who found it and suggested the wheel.
