@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('api', {
   },
   audio: {
     devices: () => invoke('audio:devices'),
+    channels: (deviceId) => invoke('audio:channels', deviceId),
     accessStatus: () => invoke('audio:access-status'),
     testSound: (volume) => invoke('audio:test-sound', volume)
   },

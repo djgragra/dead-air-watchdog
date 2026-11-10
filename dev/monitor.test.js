@@ -317,3 +317,29 @@ test('engine events: fault and recovery are routed by input id (an input must no
   assert.equal(sent.length, 0, 'a transient fault must not leave a permanent dead-air alarm');
   h['engine:levels']({ a: { rms: [-20, -20], peak: [-20, -20] } }); // does not throw for a partial batch
 });
+
+test('26.11.2: a fault of an old setup is forgotten when the device or the channel changes (the engine opens it again)', () => {
+  const DEV = { id: 'd', name: 'DVS', type: 'device', deviceId: 'dvs-15-16', channelPair: 7, thresholdDb: -50, minSilenceSec: 10 };
+  const { m, store, advance } = setup({ inputs: [DEV] });
+  m.start();
+  advance(3000, -20);
+  m.onFault('d', 'ChannelsUnavailable'); // the device has 2 channels, pair 15-16 does not exist
+  advance(5000, null);
+  assert.equal(m.status().inputs[0].fault, 'ChannelsUnavailable');
+  store.updateSettings({ inputs: [{ ...DEV, channelPair: 0 }] }); // the user picks 1-2 and saves: the engine opens the new setup, with no fault to report
+  m.syncInputs();
+  assert.equal(m.status().inputs[0].fault, null);
+  advance(4000, -20);
+  assert.equal(m.status().overall, 'ok');
+});
+
+test('26.11.2: a fault stays when the settings change but the setup of the engine does not', () => {
+  const DEV = { id: 'd', name: 'DVS', type: 'device', deviceId: 'x', channelPair: 0, thresholdDb: -50, minSilenceSec: 10 };
+  const { m, store, advance } = setup({ inputs: [DEV] });
+  m.start();
+  advance(3000, -20);
+  m.onFault('d', 'NotReadableError');
+  store.updateSettings({ inputs: [{ ...DEV, thresholdDb: -45 }] });
+  m.syncInputs();
+  assert.equal(m.status().inputs[0].fault, 'NotReadableError');
+});

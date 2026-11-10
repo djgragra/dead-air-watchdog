@@ -855,6 +855,32 @@ function markUsedDevices() {
 // The value of the channel selector of an input card: '0'-'3' = a pair, 'c1'-'c8' = one single channel.
 const chanValue = (card) => String(card.querySelector('.in-chan')?.value ?? '0');
 
+// The channel choices of a sound-card input show only the channels the device really has (a stereo device: 1–2, 1 and 2).
+// The choice already saved stays in the list, so that a saved setting is never changed in silence. If the device cannot
+// be asked, all the choices stay.
+const channelCounts = new Map(); // deviceId -> number of channels (0 = unknown)
+async function fitChannelChoices(card) {
+  const sel = card.querySelector('.in-device');
+  const chan = card.querySelector('.in-chan');
+  if (!sel || !chan) return;
+  const id = sel.value;
+  if (!channelCounts.has(id)) {
+    let n = 0;
+    try { n = Number(await api.audio.channels(id)) || 0; } catch { n = 0; }
+    if (n > 0) channelCounts.set(id, n);
+    else return;
+  }
+  if (sel.value !== id) return; // the device was changed while we asked
+  const have = channelCounts.get(id);
+  for (const o of chan.options) {
+    const single = o.value.startsWith('c');
+    const last = single ? Number(o.value.slice(1)) : Number(o.value) * 2 + 2;
+    const gone = last > have || (have < 2 && !single);
+    o.hidden = gone && o.value !== chan.value;
+    o.disabled = o.hidden;
+  }
+}
+
 function labelled(key, control, cls = 'field') {
   const l = el('label', cls);
   l.append(tel('span', '', key), control);
@@ -1136,6 +1162,7 @@ function buildInputCard(inp, open) {
     }
     chan.value = inp.channelMono ? 'c' + inp.channelMono : String(inp.channelPair || 0);
     body.append(labelled('set.dev.label', row), tel('p', 'hint', 'set.dev.hint'), labelled('set.chan.label', chan), tel('p', 'hint', 'set.chan.hint'));
+    setTimeout(() => fitChannelChoices(card), 0); // the card is in the page only after this function returns
   }
 
   const range = el('input', 'in-thr-range');
@@ -1247,6 +1274,12 @@ function readInputs() {
 }
 
 function onInputsEvent(e) {
+  if (e.target.classList?.contains('in-device')) { // another device: its own channels, and the choice goes back to the first pair
+    const card = e.target.closest('.input');
+    const chan = card?.querySelector('.in-chan');
+    if (chan) { for (const o of chan.options) { o.hidden = false; o.disabled = false; } chan.value = '0'; }
+    if (card) fitChannelChoices(card);
+  }
   if (e.target.closest('#inputsList')) setTimeout(markUsedDevices, 0); // a device, a pair or a name changed: refresh the "already used" marks
   const card = e.target.closest?.('.input');
   if (!card) return;
@@ -1557,6 +1590,8 @@ async function loadDevices() {
     const label = optionName(sel.selectedOptions[0]);
     fillDeviceSelect(sel, sel.value, label);
   }
+  channelCounts.clear();
+  for (const card of $('inputsList').querySelectorAll('.input[data-type="device"]')) fitChannelChoices(card);
   $('devDenied').classList.toggle('hidden', !devicesDenied);
   renderStatus();
 }

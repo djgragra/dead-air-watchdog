@@ -182,7 +182,7 @@ const engine = {
 
 let rpcSeq = 0;
 const rpcWaiting = new Map();
-function engineRpc(op, timeoutMs = 60_000) {
+function engineRpc(op, timeoutMs = 60_000, arg) {
   return new Promise((resolve, reject) => {
     const eng = engines[0];
     if (!eng?.ready || !eng.win) return reject(new Error('engine-not-ready'));
@@ -192,7 +192,7 @@ function engineRpc(op, timeoutMs = 60_000) {
       reject(new Error('timeout'));
     }, timeoutMs);
     rpcWaiting.set(id, { resolve, reject, timer });
-    eng.win.webContents.send('engine:rpc', { id, op });
+    eng.win.webContents.send('engine:rpc', { id, op, arg });
   });
 }
 
@@ -660,6 +660,10 @@ function registerIpc() {
   });
 
   handle('audio:access-status', () => (process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted'));
+  // how many channels a device really has (null when it cannot be opened): the channel choices show only those
+  handle('audio:channels', async (deviceId) => {
+    try { return await engineRpc('channels', 15_000, String(deviceId || '').slice(0, 300)); } catch { return null; }
+  });
   handle('audio:devices', async () => {
     if (process.platform === 'darwin' && !(await systemPreferences.askForMediaAccess('microphone'))) return { granted: false, devices: [] };
     return engineRpc('devices');

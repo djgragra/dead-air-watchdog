@@ -226,6 +226,16 @@
     mute = null;
   }
 
+  // The number of channels a device really delivers: it is opened asking for many, and the browser gives what the device has.
+  async function countChannels(deviceId) {
+    const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: { ideal: 32 } };
+    if (deviceId) audio.deviceId = { exact: deviceId };
+    const s = await navigator.mediaDevices.getUserMedia({ audio });
+    const n = (s.getAudioTracks()[0] && s.getAudioTracks()[0].getSettings().channelCount) || 0;
+    s.getTracks().forEach((t) => t.stop());
+    return n;
+  }
+
   async function listDevices() {
     // labels are empty until the user has granted access, so open the default input briefly
     let probe = null;
@@ -278,6 +288,7 @@
   api.onRpc(async (msg) => {
     try {
       if (msg.op === 'devices') api.rpcResult({ id: msg.id, result: await listDevices() });
+      else if (msg.op === 'channels') api.rpcResult({ id: msg.id, result: await countChannels(msg.arg) });
       else api.rpcResult({ id: msg.id, error: 'unknown-op' });
     } catch (err) {
       api.rpcResult({ id: msg.id, error: err && err.name ? err.name : String(err) });

@@ -63,6 +63,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       lastSampleAt: null,
       windowMax: -Infinity,
       fault: null, // reason string reported by the engine, or null
+      engineKey: JSON.stringify(engineInput(inp)), // what the engine was told to open: when it changes the engine opens it again and a fault of the old setup is forgotten
       openEventId: null,
       lastNotifyAt: 0
     };
@@ -409,6 +410,8 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));
         else {
+          const key = JSON.stringify(engineInput(inp));
+          if (key !== ch.engineKey) { ch.engineKey = key; ch.fault = null; } // other device, channel or address: the engine opens it again and reports again if it fails
           ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) });
           ch.frozen.configure({ frozenMs: (inp.frozenSec || 0) * 1000, toleranceDb: inp.frozenToleranceDb });
           if (!inp.frozenSec) {
