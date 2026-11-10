@@ -66,15 +66,15 @@
 
   // How many channels of the device an input needs open: up to the end of its pair, or up to its single channel.
   function channelsNeeded(i) {
-    const mono = Math.min(8, Math.max(0, Number(i.channelMono) || 0));
+    const mono = Math.min(16, Math.max(0, Number(i.channelMono) || 0));
     if (mono > 0) return Math.max(2, mono);
-    return Math.min(3, Math.max(0, Number(i.channelPair) || 0)) * 2 + 2;
+    return Math.min(7, Math.max(0, Number(i.channelPair) || 0)) * 2 + 2;
   }
 
   async function connectDevice(p, gen) {
     const input = p.input;
-    const mono = Math.min(8, Math.max(0, Number(input.channelMono) || 0)); // 1-8 = one single channel
-    const pair = Math.min(3, Math.max(0, Number(input.channelPair) || 0));
+    const mono = Math.min(16, Math.max(0, Number(input.channelMono) || 0)); // 1-16 = one single channel
+    const pair = Math.min(7, Math.max(0, Number(input.channelPair) || 0));
     const needed = channelsNeeded(input);
     const audioConstraints = {
       // The browser must not "improve" the signal: AGC, noise suppression and echo cancellation

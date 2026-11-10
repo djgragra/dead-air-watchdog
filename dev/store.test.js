@@ -140,11 +140,12 @@ test('inputs: new options have defaults (yellow after 2 s, frozen audio off, no 
   assert.equal(sanitizeSettings({ inputs: [{ type: 'stream', streamUrl: 'http://a.example.org/x', yellowDelaySec: 0, frozenSec: 'x' }] }).inputs[0].yellowDelaySec, 0);
 });
 
-test('26.11.2: channelMono is kept between 0 and 8; old settings without it mean a pair (0)', () => {
+test('26.11.2: channelMono is kept between 0 and 16; old settings without it mean a pair (0)', () => {
   const st = createStore({ file: tmp() });
-  st.updateSettings({ inputs: [{ id: 'a', type: 'device', channelMono: 5 }, { id: 'b', type: 'device', channelMono: 99 }, { id: 'c', type: 'device' }] });
-  const [a, b, c] = st.getSettings().inputs;
+  st.updateSettings({ inputs: [{ id: 'a', type: 'device', channelMono: 5 }, { id: 'b', type: 'device', channelMono: 99 }, { id: 'c', type: 'device' }, { id: 'd', type: 'device', channelPair: 7 }] });
+  const [a, b, c, d] = st.getSettings().inputs;
+  assert.equal(d.channelPair, 7, 'pair 15-16 is kept');
   assert.equal(a.channelMono, 5);
-  assert.equal(b.channelMono, 8);
+  assert.equal(b.channelMono, 16);
   assert.equal(c.channelMono, 0);
 });

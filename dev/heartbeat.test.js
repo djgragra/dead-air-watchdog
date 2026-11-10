@@ -52,8 +52,8 @@ test('HTTP error status counts as failure; stop clears the timer', async () => {
 });
 
 test('settings: new fields are clamped', () => {
-  const s = sanitizeSettings({ heartbeat: { enabled: 1, url: ' https://x.example.org/a ', intervalMin: 999 }, notifications: { sound: { enabled: 1, volume: 9 } }, inputs: [{ type: 'device', channelPair: 7 }] });
+  const s = sanitizeSettings({ heartbeat: { enabled: 1, url: ' https://x.example.org/a ', intervalMin: 999 }, notifications: { sound: { enabled: 1, volume: 9 } }, inputs: [{ type: 'device', channelPair: 9 }] });
   assert.deepEqual(s.heartbeat, { enabled: true, url: 'https://x.example.org/a', intervalMin: 60 });
   assert.deepEqual(s.notifications.sound, { enabled: true, volume: 1 });
-  assert.equal(s.inputs[0].channelPair, 3);
+  assert.equal(s.inputs[0].channelPair, 7);
 });

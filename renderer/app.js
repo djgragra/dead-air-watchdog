@@ -1123,12 +1123,12 @@ function buildInputCard(inp, open) {
     const row = el('span', 'row');
     row.append(sel, refresh);
     const chan = el('select', 'in-chan');
-    [0, 1, 2, 3].forEach((p) => {
+    [0, 1, 2, 3, 4, 5, 6, 7].forEach((p) => {
       const o = new Option(t(`set.chan.p${p}`), String(p));
       o.dataset.i18n = `set.chan.p${p}`;
       chan.appendChild(o);
     });
-    for (let c = 1; c <= 8; c++) {
+    for (let c = 1; c <= 16; c++) {
       const o = new Option(t('set.chan.single', { n: c }), 'c' + c);
       o.dataset.i18n = 'set.chan.single';
       o.dataset.n = String(c);

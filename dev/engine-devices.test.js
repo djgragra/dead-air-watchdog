@@ -121,6 +121,16 @@ test('26.11.2: channel 1 alone needs 2 channels as before; a mono and a pair of 
   } finally { await both.stop(); }
 });
 
+test('26.11.2: channels up to 16 (a 16-channel virtual card): channel 16 alone and pair 15-16', async () => {
+  const { calls, asked, links, sync, stop } = await load({ virt: 16 });
+  try {
+    await sync([mono('m16', 'virt', 16), dev('p8', 'virt', 7)]);
+    assert.deepEqual(asked.map((a) => a.channels), [16, 16]);
+    assert.deepEqual(links, [[15, 0], [15, 1], [14, 0], [15, 1]]);
+    assert.equal(calls.length, 0);
+  } finally { await stop(); }
+});
+
 test('26.11.2: a channel the device does not have is reported as ChannelsUnavailable', async () => {
   const { calls, sync, stop } = await load({ stereo: 2 });
   try {

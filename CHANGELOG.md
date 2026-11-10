@@ -2,7 +2,7 @@
 
 ## 26.11.2 — 2026-11-10
 
-- **Monitor one single channel.** *Settings → Inputs → sound card → Channels to monitor* now also offers *Channel 1 only (mono)* to *Channel 8 only (mono)*, besides the pairs. The input shows one level meter and uses the same sound card as before; nothing changes for the inputs you already have. Thanks to Paulo, who suggested it.
+- **Monitor one single channel.** *Settings → Inputs → sound card → Channels to monitor* now also offers *Channel 1 only (mono)* to *Channel 16 only (mono)*, besides the pairs, and the pairs now go up to *Channels 15–16* (for virtual cards with 16 channels; above 8 channels not tried on real hardware: if the card delivers fewer channels than asked, the input reports a problem). The input shows one level meter and uses the same sound card as before; nothing changes for the inputs you already have. Thanks to Paulo, who suggested it.
 - Tests: new ones for the single channel in the engine (the channel goes to both sides, the device is asked for enough channels, a missing channel is reported) and in the store. Not tried with a real multichannel interface.
 
 ## 26.11.1 — 2026-11-02

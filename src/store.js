@@ -24,8 +24,8 @@ export const DEFAULT_INPUT = Object.freeze({
   type: 'stream', // 'stream' | 'device'
   deviceId: '', // device only; '' = system default input
   deviceLabel: '',
-  channelPair: 0, // device only: 0 = channels 1-2, 1 = 3-4, 2 = 5-6, 3 = 7-8
-  channelMono: 0, // device only: 0 = measure the pair above; 1-8 = measure that single channel (mono)
+  channelPair: 0, // device only: 0 = channels 1-2, 1 = 3-4 … 7 = 15-16
+  channelMono: 0, // device only: 0 = measure the pair above; 1-16 = measure that single channel (mono)
   streamUrl: '',
   thresholdDb: -50,
   minSilenceSec: 30,
@@ -123,8 +123,8 @@ function sanitizeInput(raw, usedIds) {
   i.name = String(i.name || '').trim().slice(0, 60);
   i.deviceId = String(i.deviceId || '');
   i.deviceLabel = String(i.deviceLabel || '').slice(0, 200);
-  i.channelPair = Math.round(clamp(i.channelPair, 0, 3, 0));
-  i.channelMono = Math.round(clamp(i.channelMono, 0, 8, 0));
+  i.channelPair = Math.round(clamp(i.channelPair, 0, 7, 0));
+  i.channelMono = Math.round(clamp(i.channelMono, 0, 16, 0));
   i.streamUrl = String(i.streamUrl || '').trim().slice(0, 2000);
   i.thresholdDb = clamp(i.thresholdDb, -90, -10, d.thresholdDb);
   i.minSilenceSec = Math.round(clamp(i.minSilenceSec, 1, 3600, d.minSilenceSec));
