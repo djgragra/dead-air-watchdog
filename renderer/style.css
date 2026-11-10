@@ -225,6 +225,7 @@ fieldset.card h3 { font-size: 13px; margin: 18px 0 6px; padding-top: 14px; borde
 .hero__fault { margin-top: 8px; color: var(--warn); font-size: 13px; }
 
 .meter { min-width: 0; }
+.tile--mono .tile__body > .meter__row:last-child { display: none; } /* one single channel: one meter */
 .meter__row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; margin: 7px 0; }
 .meter__ch { font-weight: 700; color: var(--dim); text-align: center; }
 .meter__track { position: relative; height: 18px; background: var(--bg); border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }

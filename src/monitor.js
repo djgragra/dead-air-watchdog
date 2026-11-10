@@ -21,7 +21,7 @@ const PRIORITY = { alarm: 4, counting: 3, starting: 2, ok: 1 };
 export const isUsable = (inp) => inp.enabled && (inp.type === 'device' || /^https?:\/\/[^\s]+$/i.test(inp.streamUrl || ''));
 
 // What the engine needs to open an input (nothing else leaves the settings).
-const engineInput = (i) => ({ id: i.id, type: i.type, deviceId: i.deviceId, channelPair: i.channelPair, streamUrl: i.streamUrl });
+const engineInput = (i) => ({ id: i.id, type: i.type, deviceId: i.deviceId, channelPair: i.channelPair, channelMono: i.channelMono, streamUrl: i.streamUrl });
 
 export function createMonitor({ store, engine, dispatch, publish, desktopNotify = () => {}, alarmSound = () => {}, now = Date.now, host = 'this machine', log = () => {}, setIntervalFn = setInterval, clearIntervalFn = clearInterval, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) {
   const chans = new Map(); // input id -> channel state
@@ -63,6 +63,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       lastSampleAt: null,
       windowMax: -Infinity,
       fault: null, // reason string reported by the engine, or null
+      engineKey: JSON.stringify(engineInput(inp)), // what the engine was told to open: when it changes the engine opens it again and a fault of the old setup is forgotten
       openEventId: null,
       lastNotifyAt: 0
     };
@@ -190,7 +191,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function status() {
     const s = settings();
     const inputs = s.inputs.map((inp) => {
-      const base = { id: inp.id, name: inputLabel(s.language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: chans.get(inp.id)?.eff.thresholdDb ?? inp.thresholdDb, minSilenceSec: chans.get(inp.id)?.eff.minSilenceSec ?? inp.minSilenceSec, channelPair: inp.channelPair };
+      const base = { id: inp.id, name: inputLabel(s.language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: chans.get(inp.id)?.eff.thresholdDb ?? inp.thresholdDb, minSilenceSec: chans.get(inp.id)?.eff.minSilenceSec ?? inp.minSilenceSec, channelPair: inp.channelPair, channelMono: inp.channelMono };
       const p = pauses.get(inp.id);
       if (p && p.until > now()) base.pausedUntil = p.until;
       const ch = chans.get(inp.id);
@@ -409,6 +410,8 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));
         else {
+          const key = JSON.stringify(engineInput(inp));
+          if (key !== ch.engineKey) { ch.engineKey = key; ch.fault = null; } // other device, channel or address: the engine opens it again and reports again if it fails
           ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) });
           ch.frozen.configure({ frozenMs: (inp.frozenSec || 0) * 1000, toleranceDb: inp.frozenToleranceDb });
           if (!inp.frozenSec) {
