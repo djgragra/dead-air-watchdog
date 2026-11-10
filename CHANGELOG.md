@@ -1,5 +1,10 @@
 # Changelog
 
+## 26.11.2 — 2026-11-10
+
+- **Monitor one single channel.** *Settings → Inputs → sound card → Channels to monitor* now also offers *Channel 1 only (mono)* to *Channel 8 only (mono)*, besides the pairs. The input shows one level meter and uses the same sound card as before; nothing changes for the inputs you already have. Thanks to Paulo, who suggested it.
+- Tests: new ones for the single channel in the engine (the channel goes to both sides, the device is asked for enough channels, a missing channel is reported) and in the store. Not tried with a real multichannel interface.
+
 ## 26.11.1 — 2026-11-02
 
 - **Fix: compact view, shorter window.** With the window wider than about 820 pixels (at normal zoom) the compact view had no scrollbar at all, so the rows at the bottom were cut and could not be reached; below that width the scrollbar appeared and came and went with the zoom, and the end of the list did not stay in sight. Now the whole page scrolls, at every width and zoom: the top bar (buttons and status) goes first, and when the window gets shorter while the list is at its end, the end of the list stays in sight. Not tried on a real Windows PC. Thanks to Paul, who found the width at which it changes.

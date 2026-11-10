@@ -17,7 +17,7 @@
   let batch = {};
   let batchTimer = null;
 
-  const keyOf = (i) => [i.type, i.deviceId, i.channelPair, i.want, i.streamUrl].join('|');
+  const keyOf = (i) => [i.type, i.deviceId, i.channelPair, i.channelMono, i.want, i.streamUrl].join('|');
 
   function setFault(p, reason) {
     if (!p.faulted) api.fault(p.id, reason);
@@ -64,10 +64,18 @@
     p.retryTimer = setTimeout(() => { if (gen === p.gen) connect(p, gen); }, delay);
   }
 
+  // How many channels of the device an input needs open: up to the end of its pair, or up to its single channel.
+  function channelsNeeded(i) {
+    const mono = Math.min(8, Math.max(0, Number(i.channelMono) || 0));
+    if (mono > 0) return Math.max(2, mono);
+    return Math.min(3, Math.max(0, Number(i.channelPair) || 0)) * 2 + 2;
+  }
+
   async function connectDevice(p, gen) {
     const input = p.input;
+    const mono = Math.min(8, Math.max(0, Number(input.channelMono) || 0)); // 1-8 = one single channel
     const pair = Math.min(3, Math.max(0, Number(input.channelPair) || 0));
-    const needed = pair * 2 + 2;
+    const needed = channelsNeeded(input);
     const audioConstraints = {
       // The browser must not "improve" the signal: AGC, noise suppression and echo cancellation
       // would change the very level we are measuring. Every input on the same device asks for the same number of
@@ -78,7 +86,7 @@
     const s = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     if (gen !== p.gen) { s.getTracks().forEach((t) => t.stop()); return; }
     const have = (s.getAudioTracks()[0] && s.getAudioTracks()[0].getSettings().channelCount) || 2;
-    if (pair > 0 && have < needed) {
+    if ((pair > 0 || mono > 0) && have < needed) {
       s.getTracks().forEach((t) => t.stop());
       const e = new Error('device has ' + have + ' channels, ' + needed + ' needed');
       e.name = 'ChannelsUnavailable';
@@ -86,7 +94,16 @@
     }
     p.stream = s;
     p.source = ctx.createMediaStreamSource(s);
-    if (pair > 0) {
+    if (mono > 0) {
+      // measure one single channel of a multichannel interface: it goes to both sides, so the level is that of the channel
+      const splitter = ctx.createChannelSplitter(have);
+      const merger = ctx.createChannelMerger(2);
+      p.source.connect(splitter);
+      splitter.connect(merger, mono - 1, 0);
+      splitter.connect(merger, mono - 1, 1);
+      merger.connect(p.node);
+      p.chain = [splitter, merger];
+    } else if (pair > 0) {
       // measure channels (2p+1, 2p+2) of a multichannel interface
       const splitter = ctx.createChannelSplitter(have);
       const merger = ctx.createChannelMerger(2);
@@ -188,7 +205,7 @@
     ensureContext();
     // channels to ask of each device: the most that any input on it needs
     const most = new Map();
-    for (const i of list) if (i.type === 'device') most.set(i.deviceId, Math.max(most.get(i.deviceId) || 2, (Math.min(3, Math.max(0, Number(i.channelPair) || 0))) * 2 + 2));
+    for (const i of list) if (i.type === 'device') most.set(i.deviceId, Math.max(most.get(i.deviceId) || 2, channelsNeeded(i)));
     list = list.map((i) => (i.type === 'device' ? { ...i, want: most.get(i.deviceId) } : i));
     const wanted = new Map(list.map((i) => [i.id, i]));
     for (const p of [...pipes.values()]) {

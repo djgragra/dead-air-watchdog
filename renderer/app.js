@@ -124,7 +124,7 @@ const hostOf = (u) => {
 // ---- language and theme -------------------------------------------------------------------
 function applyI18n() {
   document.documentElement.lang = lang;
-  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = t(node.dataset.i18n);
+  for (const node of document.querySelectorAll('[data-i18n]')) node.textContent = node.dataset.n ? t(node.dataset.i18n, { n: node.dataset.n }) : t(node.dataset.i18n);
   $('aboutText').textContent = t('help.pAbout', { v: info.version });
   document.title = t('app.title');
   $('brandLink').title = t('brand.tip');
@@ -384,7 +384,9 @@ function renderTiles() {
     tile.sub.textContent = sub;
     tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
     const pair = inp.type === 'device' ? inp.channelPair || 0 : 0;
-    tile.rows[0].ch.textContent = pair ? String(pair * 2 + 1) : t('meter.ch1');
+    const mono = inp.type === 'device' ? inp.channelMono || 0 : 0;
+    tile.root.classList.toggle('tile--mono', mono > 0); // one single channel: one meter
+    tile.rows[0].ch.textContent = mono ? String(mono) : pair ? String(pair * 2 + 1) : t('meter.ch1');
     tile.rows[1].ch.textContent = pair ? String(pair * 2 + 2) : t('meter.ch2');
     for (const r of tile.rows) r.thr.style.left = `${pctOf(inp.thresholdDb)}%`;
     if (!['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state)) resetTileMeter(tile);
@@ -850,6 +852,9 @@ function markUsedDevices() {
   }
 }
 
+// The value of the channel selector of an input card: '0'-'3' = a pair, 'c1'-'c8' = one single channel.
+const chanValue = (card) => String(card.querySelector('.in-chan')?.value ?? '0');
+
 function labelled(key, control, cls = 'field') {
   const l = el('label', cls);
   l.append(tel('span', '', key), control);
@@ -1123,7 +1128,13 @@ function buildInputCard(inp, open) {
       o.dataset.i18n = `set.chan.p${p}`;
       chan.appendChild(o);
     });
-    chan.value = String(inp.channelPair || 0);
+    for (let c = 1; c <= 8; c++) {
+      const o = new Option(t('set.chan.single', { n: c }), 'c' + c);
+      o.dataset.i18n = 'set.chan.single';
+      o.dataset.n = String(c);
+      chan.appendChild(o);
+    }
+    chan.value = inp.channelMono ? 'c' + inp.channelMono : String(inp.channelPair || 0);
     body.append(labelled('set.dev.label', row), tel('p', 'hint', 'set.dev.hint'), labelled('set.chan.label', chan), tel('p', 'hint', 'set.chan.hint'));
   }
 
@@ -1201,7 +1212,7 @@ function renderInputsList() {
 }
 
 function addInput(type) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', schedule: { enabled: false, rules: [] }, enabled: true };
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, channelMono: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', schedule: { enabled: false, rules: [] }, enabled: true };
   const card = buildInputCard(base, true);
   $('inputsList').appendChild(card);
   updateInputsFooter();
@@ -1222,7 +1233,8 @@ function readInputs() {
       streamUrl: type === 'stream' ? card.querySelector('.in-url').value.trim() : '',
       deviceId,
       deviceLabel: deviceId ? optionName(sel.selectedOptions[0]) : '',
-      channelPair: type === 'device' ? Number(card.querySelector('.in-chan').value) || 0 : 0,
+      channelPair: type === 'device' ? (chanValue(card).startsWith('c') ? 0 : Number(chanValue(card)) || 0) : 0,
+      channelMono: type === 'device' && chanValue(card).startsWith('c') ? Number(chanValue(card).slice(1)) || 0 : 0,
       thresholdDb: Number(card.querySelector('.in-thr').value),
       minSilenceSec: Number(card.querySelector('.in-min').value),
       yellowDelaySec: Number(card.querySelector('.in-yellow').value) || 0,
