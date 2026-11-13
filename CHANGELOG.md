@@ -1,5 +1,10 @@
 # Changelog
 
+## 26.11.3 — 2026-11-13
+
+- **Song title (now playing) on the tile.** For a stream, *Settings → Inputs → More options → Show the song title (now playing) on the tile* shows the title that the Icecast or Shoutcast server announces inside the stream, under the state of the input, in the Dashboard, in the compact view (while the input is OK) and in the Wall display. It is chosen stream by stream and is off by default. It costs one short extra request to the server every 20 seconds (a few kilobytes; the audio read for it is discarded), made only while monitoring and while the window is on screen; nothing is recorded, and it never changes what is measured or when an alarm starts. A server that sends no titles shows nothing. Tried against a local server that speaks the ICY protocol, not against real Icecast or Shoutcast servers. Thanks to Mark, who suggested it.
+- Tests: `dev/now-playing.test.js` (13 cases, with a real local ICY server).
+
 ## 26.11.2 — 2026-11-10
 
 - **Monitor one single channel.** *Settings → Inputs → sound card → Channels to monitor* now also offers *Channel 1 only (mono)* to *Channel 16 only (mono)*, besides the pairs, and the pairs now go up to *Channels 15–16* (for virtual cards with 16 channels; above 8 channels not tried on real hardware: if the card delivers fewer channels than asked, the input reports a problem). The input shows one level meter and uses the same sound card as before; nothing changes for the inputs you already have. Thanks to Paulo, who suggested it.

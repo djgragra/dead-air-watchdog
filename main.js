@@ -15,6 +15,7 @@ import { createAlertState } from './src/alert-state.js';
 import { createUpdateNotice } from './src/update-notice.js';
 import { buildExport, prepareImport, backupFileName, MAX_BACKUP_BYTES } from './src/backup.js';
 import { createHeartbeat } from './src/heartbeat.js';
+import { createNowPlaying } from './src/now-playing.js';
 import { createLogos } from './src/logos.js';
 import { engineHandlers } from './src/engine-events.js';
 import { shardInputs } from './src/engine-shards.js';
@@ -47,6 +48,7 @@ const deliveryFaults = new Map();
 const faultList = () => [...deliveryFaults].map(([channel, f]) => ({ channel, ...f }));
 let alertState;
 let heartbeat;
+let nowPlaying;
 let logos;
 let wallBlockerId = null;
 let soundActive = false;
@@ -343,6 +345,7 @@ function createWindow() {
     applyWindowMode(store.getSettings()); // a change of view asked for during the wall display
     sendUi('event:wall-exit');
   });
+  for (const ev of ['show', 'restore']) mainWindow.on(ev, () => nowPlaying?.refresh()); // on screen again: the song titles are asked now
   mainWindow.on('close', (e) => {
     rememberWindow();
     if (isQuitting) return;
@@ -530,6 +533,7 @@ function registerIpc() {
     applyGeneralSettings(next);
     applyWindowMode(next);
     monitor.syncInputs(); // inputs added, removed or edited while monitoring
+    nowPlaying?.tick(); // a title switched on (or off) in the settings is asked for (or dropped) now
     if (!monitor.isRunning()) heartbeat.stop();
     heartbeat.restart();
     applyKeepAwake();
@@ -582,6 +586,7 @@ function registerIpc() {
   handle('monitor:start', startMonitoring);
   handle('monitor:stop', stopMonitoring);
   handle('monitor:status', () => ({ ...monitor.status(), soundPlaying: lastStatus?.soundPlaying ?? false }));
+  handle('nowplaying:get', () => nowPlaying.get());
 
   handle('logos:all', () => logos.all());
   handle('logos:set', (id, dataUrl) => {
@@ -901,6 +906,15 @@ app.whenReady().then(() => {
   });
 
   heartbeat = createHeartbeat({ getSettings: () => store.getSettings(), fetchFn: (u, o) => net.fetch(u, o), version: app.getVersion(), log: (m, level) => clog(m, level, 'heartbeat') });
+  // song titles of the streams that asked for them (ICY metadata): asked only while monitoring and while the window is on screen
+  nowPlaying = createNowPlaying({
+    getSettings: () => store.getSettings(),
+    isActive: () => monitor.isRunning() && !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized(),
+    fetchFn: (u, o) => net.fetch(u, o),
+    publish: (m) => sendUi('event:now-playing', m),
+    log: (m, level) => clog(m, level, 'now-playing')
+  });
+  nowPlaying.start();
   registerIpc();
   createEngineWindow(0);
   createWindow();
@@ -937,6 +951,7 @@ app.on('before-quit', () => {
   try {
     monitor?.stop(true);
     heartbeat?.stop();
+    nowPlaying?.stop();
     dispatcher?.cancelPending();
     store?.flush();
   } catch (err) {

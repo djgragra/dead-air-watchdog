@@ -18,7 +18,8 @@ contextBridge.exposeInMainWorld('api', {
     start: () => invoke('monitor:start'),
     stop: () => invoke('monitor:stop'),
     status: () => invoke('monitor:status'),
-    muteAlarm: () => invoke('alarm:mute')
+    muteAlarm: () => invoke('alarm:mute'),
+    nowPlaying: () => invoke('nowplaying:get')
   },
   events: {
     list: () => invoke('events:list'),
@@ -89,6 +90,7 @@ contextBridge.exposeInMainWorld('api', {
     updateProgress: on('event:update-progress'),
     settingsChanged: on('event:settings-changed'),
     delivery: on('event:delivery'),
+    nowPlaying: on('event:now-playing'),
     wallExit: on('event:wall-exit')
   }
 });
