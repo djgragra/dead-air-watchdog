@@ -33,6 +33,7 @@ export const DEFAULT_INPUT = Object.freeze({
   frozenSec: 0, // 0 = off; otherwise: a level that stays (almost) the same for this long above the threshold is an alarm ("frozen audio")
   frozenToleranceDb: 1, // how much the level may vary and still count as the same
   microSilences: 'default', // micro-silences in the log for this input: 'default' (as in General) | 'on' | 'off'
+  nowPlaying: false, // streams only: show the song title the server sends (ICY metadata) on the tile; off unless chosen, one extra short request every 20 s (src/now-playing.js)
   schedule: DEFAULT_SCHEDULE, // monitoring hours: see src/core/schedule.js
   enabled: true
 });
@@ -133,6 +134,7 @@ function sanitizeInput(raw, usedIds) {
   i.frozenSec = Number.isFinite(fz) && fz > 0 ? Math.round(clamp(fz, 10, 3600, 60)) : 0;
   i.frozenToleranceDb = Math.round(clamp(i.frozenToleranceDb, 0.1, 6, d.frozenToleranceDb) * 10) / 10;
   i.microSilences = ['default', 'on', 'off'].includes(i.microSilences) ? i.microSilences : d.microSilences;
+  i.nowPlaying = i.type === 'stream' && i.nowPlaying === true;
   i.schedule = sanitizeSchedule(i.schedule, { thresholdDb: i.thresholdDb, minSilenceSec: i.minSilenceSec });
   i.enabled = i.enabled !== false;
   return Object.fromEntries(Object.keys(d).map((k) => [k, i[k]]));

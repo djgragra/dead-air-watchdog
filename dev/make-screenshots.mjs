@@ -124,7 +124,7 @@ const initScript = ({ settings, status, events, daily, APP_VERSION, extra }) => 
   window.api = {
     platform: 'win32',
     settings: { get: resolved(settings), update: (p) => Promise.resolve({ ...settings, ...p }) },
-    monitor: { start: resolved(status), stop: resolved(status), status: resolved(status), muteAlarm: resolved(), pause: resolved({ ok: true }) },
+    monitor: { start: resolved(status), stop: resolved(status), status: resolved(status), muteAlarm: resolved(), pause: resolved({ ok: true }), nowPlaying: resolved(window.__nowPlaying || {}) },
     events: { list: resolved(events), export: resolved({ ok: false }), clear: resolved() },
     stats: { daily: resolved(daily) },
     wall: { set: resolved() },
@@ -142,7 +142,7 @@ const initScript = ({ settings, status, events, daily, APP_VERSION, extra }) => 
     },
     delivery: { get: resolved([]) },
     app: { info: resolved({ version: APP_VERSION, platform: 'win32', arch: 'x64', packaged: true, host: 'STUDIO-PC', logsDir: '' }), openExternal: resolved(), supportInfo: resolved('Dead Air Watchdog'), openLogs: resolved() },
-    on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), delivery: on('delivery'), wallExit: on('wallExit') }
+    on: { status: on('status'), levels: on('levels'), eventsChanged: on('eventsChanged'), updateAvailable: on('updateAvailable'), updateProgress: on('updateProgress'), settingsChanged: on('settingsChanged'), delivery: on('delivery'), wallExit: on('wallExit'), nowPlaying: on('nowPlaying') }
   };
 };
 
@@ -270,5 +270,26 @@ await shoot('20-micro-silences-off.png', 'light', async (page) => {
     card.querySelector('.in-micro').scrollIntoView({ block: 'center' });
   });
 }, status, microCfg);
+
+// ---- 26.11.3: song titles (now playing) of the streams that asked for them: dashboard, compact view, wall display ----
+const npCfg = (compact) => {
+  const c = settings('dark');
+  c.inputs[1].nowPlaying = true;
+  c.inputs[2].nowPlaying = true;
+  if (compact) c.window = { ...c.window, compact: true };
+  return c;
+};
+const titles = { __nowPlaying: { 'in-b': 'Fleetwood Mac - Dreams', 'in-c': 'Daft Punk - Digital Love' } };
+await shoot('21-now-playing.png', 'dark', async (page) => {
+  await levels(page);
+}, status, npCfg(false), titles);
+await shoot('22-now-playing-compact.png', 'dark', async (page) => {
+  await levels(page);
+}, status, npCfg(true), titles, { width: 400, height: 190 });
+await shoot('23-now-playing-wall.png', 'dark', async (page) => {
+  await page.click('#wallBtn');
+  await page.waitForTimeout(500);
+  await levels(page);
+}, status, npCfg(false), titles);
 await browser.close();
 server.close();

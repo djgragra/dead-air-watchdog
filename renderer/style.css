@@ -334,6 +334,7 @@ dialog p { margin: 8px 0; color: var(--dim); }
 .tile[data-state="idle"] .tile__state, .tile[data-state="off"] .tile__state, .tile[data-state="incomplete"] .tile__state { color: var(--dim); }
 .tile__sub { color: var(--dim); font-size: 13px; min-height: 18px; font-variant-numeric: tabular-nums; }
 .tile__fault { color: var(--warn); font-size: 12px; }
+.tile__np { color: var(--text); font-size: 13px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile__blips { font-size: 12px; color: var(--warn); background: none; border: 0; padding: 0; text-align: left; cursor: pointer; text-decoration: underline dotted; width: fit-content; }
 .tile .meter__row { margin: 3px 0; grid-template-columns: auto 1fr auto; }
 .tile .meter__track { height: 10px; }
@@ -422,12 +423,14 @@ body.wall .tile__dot { width: clamp(8px, 4cqmin, 14px); height: clamp(8px, 4cqmi
 body.wall .tile__state { font-size: clamp(14px, 14cqmin, 80px); }
 body.wall .tile__sub { font-size: clamp(9px, 5cqmin, 28px); min-height: 0; }
 body.wall .tile__fault { font-size: clamp(9px, 4.5cqmin, 20px); }
+body.wall .tile__np { font-size: clamp(10px, 6.5cqmin, 34px); line-height: 1.2; white-space: normal; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 body.wall .tile .meter__row { margin: clamp(1px, 0.8cqmin, 3px) 0; }
 body.wall .tile .meter__track { height: clamp(5px, 3.6cqmin, 26px); }
 body.wall .tile .meter__num { font-size: clamp(9px, 4.4cqmin, 24px); min-width: 9cqmin; }
 body.wall .tile .meter__ch { font-size: clamp(8px, 4cqmin, 16px); }
 /* a very small tile keeps the name, the state and the first meter only */
 @container (max-height: 150px) { .meter__row:nth-of-type(2), .tile__sub { display: none; } }
+@container (max-height: 120px) { .tile__np { display: none; } } /* a very small tile keeps the name, the state and the first meter */
 @container (max-height: 95px) { .meter__row { display: none; } }
 
 /* wall display: the logo of an input. small = next to the name; large = a big column at the left of the tile;
@@ -534,13 +537,17 @@ body.compact:not(.wall) .tile__type, body.compact:not(.wall) .tile__logo, body.c
 body.compact:not(.wall) .tile__dot { width: 10px; height: 10px; }
 body.compact:not(.wall) .tile__state { grid-column: 2; grid-row: 1 / 3; font-size: 14px; text-align: right; white-space: nowrap; }
 body.compact:not(.wall) .tile__sub { grid-column: 1; grid-row: 2; min-height: 0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* now playing: in the second line, in place of the threshold, while the input is OK (the other states need that line) */
+body.compact:not(.wall) .tile__np { grid-column: 1; grid-row: 2; font-size: 11px; color: var(--dim); }
+body.compact:not(.wall) .tile:not([data-state="ok"]) .tile__np { display: none; }
+body.compact:not(.wall) .tile[data-state="ok"].has-np .tile__sub { display: none; }
 body.compact:not(.wall) .tile__body > .meter__row { grid-column: 3; margin: 1px 0; grid-template-columns: 1fr; }
 body.compact:not(.wall) .tile__body > .meter__row:nth-last-child(2) { grid-row: 1; }
 body.compact:not(.wall) .tile__body > .meter__row:last-child { grid-row: 2; }
 body.compact:not(.wall) .tile .meter__track { height: 6px; }
 @media (max-width: 250px) { /* very narrow: the names and the state get the width, the level bars go */
   body.compact:not(.wall) .tile__body { grid-template-columns: minmax(0, 1fr) auto; }
-  body.compact:not(.wall) .tile__body > .meter__row, body.compact:not(.wall) .tile__sub { display: none; }
+  body.compact:not(.wall) .tile__body > .meter__row, body.compact:not(.wall) .tile__sub, body.compact:not(.wall) .tile__np { display: none; }
   body.compact:not(.wall) .tile__head { grid-row: 1; }
   body.compact:not(.wall) .tile__state { grid-column: 1; grid-row: 2; text-align: left; font-size: 12px; }
   body.compact:not(.wall) .topbar .btn { padding: 2px 6px; }

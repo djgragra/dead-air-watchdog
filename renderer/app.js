@@ -39,6 +39,7 @@ let activeTab = 'inputs';
 let wall = false;
 let cursorTimer = null;
 let logos = {}; // input id -> PNG data URL
+let nowPlaying = {}; // input id -> song title that the stream announces (only inputs that asked for it)
 const tiles = new Map(); // input id -> { root, name, type, state, sub, fault, rows }
 
 function el(tag, cls, text) {
@@ -303,8 +304,9 @@ function tileFor(input) {
   const fault = el('div', 'tile__fault');
   const blips = el('button', 'tile__blips hidden');
   blips.type = 'button';
+  const np = el('div', 'tile__np hidden'); // song title (now playing), for the streams that asked for it
   const body = el('div', 'tile__body');
-  body.append(head, state, sub, fault, blips);
+  body.append(head, state, sub, np, fault, blips);
   root.append(art, body);
   const rows = [0, 1].map(() => {
     const row = el('div', 'meter__row');
@@ -321,7 +323,7 @@ function tileFor(input) {
   });
   pause.addEventListener('click', (e) => openPauseMenu(root.dataset.id, pause, e));
   blips.addEventListener('click', () => showMicroLog(root.dataset.id));
-  tile = { root, logo, artImg, art, pause, blips, name, type, state, sub, fault, rows };
+  tile = { root, logo, artImg, art, pause, blips, name, type, state, sub, np, fault, rows };
   tiles.set(input.id, tile);
   return tile;
 }
@@ -383,6 +385,7 @@ function renderTiles() {
     else if (inp.state === 'ok') sub = t('meter.threshold', { db: inp.thresholdDb });
     tile.sub.textContent = sub;
     tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
+    renderTileNowPlaying(tile, inp);
     const pair = inp.type === 'device' ? inp.channelPair || 0 : 0;
     const mono = inp.type === 'device' ? inp.channelMono || 0 : 0;
     tile.root.classList.toggle('tile--mono', mono > 0); // one single channel: one meter
@@ -393,6 +396,24 @@ function renderTiles() {
   });
   fitWallGrid();
   fitWallNames();
+}
+
+// The song title of a stream (Settings → Inputs → More options → Now playing): under the state on the tile, in the
+// dashboard, the compact view and the wall display. Only while the input is being monitored and not faulty.
+function renderTileNowPlaying(tile, inp) {
+  const title = status.running && !inp.fault && ['ok', 'counting', 'alarm', 'starting'].includes(inp.state) ? nowPlaying[inp.id] || '' : '';
+  tile.np.textContent = title ? `♪ ${title}` : '';
+  tile.np.title = title ? `${t('tile.nowPlaying')}: ${title}` : '';
+  tile.np.classList.toggle('hidden', !title);
+  tile.root.classList.toggle('has-np', !!title);
+  if (tile.npTitle !== title) { tile.npTitle = title; if (wall) fitWallGrid(); }
+}
+
+function renderNowPlaying() {
+  for (const inp of status.inputs) {
+    const tile = tiles.get(inp.id);
+    if (tile) renderTileNowPlaying(tile, inp);
+  }
 }
 
 // ---- micro-silences and pauses on the tiles ------------------------------------------------------------------
@@ -1058,7 +1079,17 @@ function buildAdvanced(inp) {
   const mField = el('div', 'field');
   mField.append(tel('span', '', 'adv.micro'), mSel, tel('p', 'hint', 'adv.micro.hint'));
 
-  body.append(yField, mField, fField, sField);
+  // now playing (streams only): the song title the server sends, shown on the tile
+  const npOn = el('input', 'in-np');
+  npOn.type = 'checkbox';
+  npOn.checked = inp.nowPlaying === true;
+  const npLabel = el('label', 'check');
+  npLabel.append(npOn, tel('span', '', 'adv.np'));
+  const npField = el('div', 'field in-np-field');
+  npField.append(npLabel, tel('p', 'hint', 'adv.np.hint'));
+  npField.classList.toggle('hidden', inp.type !== 'stream');
+
+  body.append(yField, mField, npField, fField, sField);
   box.appendChild(body);
   return box;
 }
@@ -1239,7 +1270,7 @@ function renderInputsList() {
 }
 
 function addInput(type) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, channelMono: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', schedule: { enabled: false, rules: [] }, enabled: true };
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, channelMono: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
   const card = buildInputCard(base, true);
   $('inputsList').appendChild(card);
   updateInputsFooter();
@@ -1268,6 +1299,7 @@ function readInputs() {
       frozenSec: card.querySelector('.in-frozen-on').checked ? Number(card.querySelector('.in-frozen-sec').value) || 60 : 0,
       frozenToleranceDb: Number(card.querySelector('.in-frozen-tol').value) || 1,
       microSilences: card.querySelector('.in-micro').value,
+      nowPlaying: type === 'stream' && card.querySelector('.in-np').checked,
       schedule: readSchedule(card)
     };
   });
@@ -2154,6 +2186,8 @@ function wire() {
   $('brandLink').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSite(); } });
   for (const id of ['tipBtn', 'tipJar']) $(id).addEventListener('click', () => api.app.openExternal(tipUrl(lang)));
 
+  api.monitor.nowPlaying().then((m) => { nowPlaying = m || {}; renderNowPlaying(); }).catch(() => {});
+  api.on.nowPlaying((m) => { nowPlaying = m || {}; renderNowPlaying(); });
   api.on.status((st) => {
     status = st;
     renderStatus();
