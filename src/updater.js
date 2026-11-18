@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// The update check always asks this repository (never one named in the settings, e.g. coming from an imported backup).
 export const REPO = 'djgragra/dead-air-watchdog';
 export const PRODUCT = 'Dead-Air-Watchdog';
 export const SLUG = 'dead-air-watchdog';

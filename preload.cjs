@@ -52,16 +52,19 @@ contextBridge.exposeInMainWorld('api', {
     test: (channel, cfg) => invoke('notify:test', channel, cfg)
   },
   backup: {
-    export: (includeSecrets) => invoke('backup:export', includeSecrets),
+    export: (includeSecrets, includeLogos) => invoke('backup:export', includeSecrets, includeLogos),
     import: (mode) => invoke('backup:import', mode)
   },
   logos: {
     all: () => invoke('logos:all'),
-    set: (id, dataUrl) => invoke('logos:set', id, dataUrl),
-    remove: (id) => invoke('logos:remove', id)
+    add: (dataUrl) => invoke('logos:add', dataUrl),
+    delete: (id) => invoke('logos:delete', id)
   },
   heartbeat: {
     test: (url) => invoke('heartbeat:test', url)
+  },
+  engine: {
+    problem: () => invoke('engine:problem')
   },
   updates: {
     check: () => invoke('update:check'),
@@ -87,6 +90,7 @@ contextBridge.exposeInMainWorld('api', {
     levels: on('event:levels'),
     eventsChanged: on('event:events-changed'),
     updateAvailable: on('event:update-available'),
+    engineProblem: on('event:engine-problem'),
     updateProgress: on('event:update-progress'),
     settingsChanged: on('event:settings-changed'),
     delivery: on('event:delivery'),

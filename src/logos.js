@@ -1,7 +1,10 @@
-// Logos of the inputs: small PNG files kept next to the settings (one per input id), not inside the
-// settings file (that one is rewritten often). The window shrinks the picture to MAX_SIDE pixels and
+// Logos: small PNG files kept next to the settings, one per logo id (a library), not inside the settings file (that
+// one is rewritten often). An input points to its logo with `logo` (several inputs of the same station can share one).
+// Until 0.2.1 the file was named after the input (`<input id>.png`): such a file is still a logo of the library, and
+// `adoptLegacy` gives it to its input. The window shrinks the picture to MAX_SIDE pixels and
 // sends it as a PNG data URL; everything is checked again here because the window is not trusted blindly.
 // Electron-free: the folder is injected, so it can be tested.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -29,6 +32,41 @@ export function createLogos(dir) {
     return path.join(dir, `${id}.png`);
   };
   return {
+    // a new logo of the library: returns its id
+    // The same picture added again gives the logo that is already there (no copy for each input of a station).
+    add(dataUrl) {
+      const bytes = decodeLogo(dataUrl);
+      for (const id of this.ids()) {
+        try {
+          if (fs.readFileSync(fileOf(id)).equals(bytes)) return id;
+        } catch {
+          /* unreadable: not a match */
+        }
+      }
+      const id = `lg${crypto.randomBytes(6).toString('hex')}`;
+      this.set(id, dataUrl);
+      return id;
+    },
+    // { id: sha256 of the picture } for every stored logo: two ids with the same hash are the same picture
+    hashes() {
+      const out = {};
+      for (const id of this.ids()) {
+        try {
+          out[id] = crypto.createHash('sha256').update(fs.readFileSync(fileOf(id))).digest('hex');
+        } catch {
+          /* unreadable: left out */
+        }
+      }
+      return out;
+    },
+    // the ids of the stored logos (no pictures read)
+    ids() {
+      try {
+        return fs.readdirSync(dir).filter((n) => n.endsWith('.png') && ID_RE.test(n.replace(/\.png$/, ''))).map((n) => n.replace(/\.png$/, ''));
+      } catch {
+        return [];
+      }
+    },
     set(id, dataUrl) {
       const bytes = decodeLogo(dataUrl);
       const file = fileOf(id);

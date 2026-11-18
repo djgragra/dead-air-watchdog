@@ -4,7 +4,7 @@
 // Everything with side effects is injected so tests can drive it with a fake clock.
 import { createDetector } from './core/detector.js';
 import { loudestChannel } from './core/level.js';
-import { inputLabel, buildAlert, buildGroupAlert } from './messages.js';
+import { inputLabel, inputOwnLabel, buildAlert, buildGroupAlert } from './messages.js';
 import { createGrouper } from './grouping.js';
 import { createFrozenDetector } from './core/frozen.js';
 import { activeRule, windowEnd } from './core/schedule.js';
@@ -39,6 +39,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   const settings = () => store.getSettings();
   const inputById = (id) => settings().inputs.find((i) => i.id === id);
   const activeInputs = () => settings().inputs.filter(isUsable);
+  const labelOf = (inp) => inputLabel(settings().language, inp, settings().stations); // a stream without a name of its own takes its station's
 
   // What applies to an input right now: its own values, or those of the monitoring-hours rule that is active.
   // { thresholdDb, minSilenceSec, off, until }: off = nothing is judged (until = when the window ends).
@@ -69,12 +70,15 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     };
   }
 
-  const anyAlarm = () => [...chans.values()].some((c) => c.detector.snapshot(now()).status === 'alarm' || c.frozen.snapshot(now()).alarm);
+  // Only the inputs with their alerts on sound the alarm and send messages: an input "without alerts" or "indicator only" is
+  // watched and shown (the first also logged) but never speaks.
+  const alertsOn = (inp) => !inp || (inp.alerts || 'on') === 'on';
+  const anyAlarm = () => [...chans.values()].some((c) => alertsOn(inputById(c.id)) && (c.detector.snapshot(now()).status === 'alarm' || c.frozen.snapshot(now()).alarm));
 
   function alertData(inp, extra) {
     const s = settings();
     const eff = chans.get(inp.id)?.eff || inp;
-    return { input: inputLabel(s.language, inp), thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
+    return { input: labelOf(inp), thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
   }
 
   // Several inputs failing (or coming back) together go out as one message (src/grouping.js); a lone one is not delayed.
@@ -91,8 +95,9 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   });
 
   function send(inp, kind, extra) {
+    if (!alertsOn(inp)) return; // no messages for an input without alerts
     const lang = settings().language;
-    const name = inputLabel(lang, inp);
+    const name = labelOf(inp);
     const { subject, text } = buildAlert(lang, kind, alertData(inp, extra), settings().notifications.templates);
     const single = { subject, text, label: `${kind}:${name}`, event: { kind, items: [{ input: name, cause: extra.cause, start: extra.start, end: extra.end, durationMs: extra.durationMs }] } };
     if (kind === 'alarm' || kind === 'recovered') grouper.submit(kind, { input: name, cause: extra.cause, start: extra.start, end: extra.end, durationMs: extra.durationMs }, single);
@@ -108,22 +113,25 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function handleEvent(ch, ev) {
     const inp = inputById(ch.id);
     if (!inp) return;
-    const label = inputLabel(settings().language, inp);
+    if (inp.alerts === 'indicator') return; // only AUDIO YES / NO on the tile: nothing is logged or sent
+    const label = labelOf(inp);
     const { thresholdDb, minSilenceSec } = ch.eff;
     if (ev.type === 'alarm') {
       const rec = store.addEvent({ kind: 'dead-air', cause: ev.cause, start: ev.start, end: null, input: label, inputId: inp.id, thresholdDb, minSilenceSec });
       ch.openEventId = rec.id;
       ch.lastNotifyAt = now();
       send(inp, 'alarm', { cause: ev.cause, start: ev.start });
-      desktopNotify('alarm', { input: label });
-      alarmSound(true); // a new alarm always sounds, even if an earlier one was silenced
+      if (alertsOn(inp)) {
+        desktopNotify('alarm', { input: label });
+        alarmSound(true); // a new alarm always sounds, even if an earlier one was silenced
+      }
       log(`ALARM ${label}: ${ev.cause} since ${new Date(ev.start).toISOString()}`, 'error');
       publish.events();
     } else if (ev.type === 'recovered') {
       if (ch.openEventId) store.updateEvent(ch.openEventId, { end: ev.end });
       ch.openEventId = null;
       send(inp, 'recovered', { cause: ev.cause, start: ev.start, end: ev.end, durationMs: ev.durationMs });
-      desktopNotify('recovered', { input: label, durationMs: ev.durationMs });
+      if (alertsOn(inp)) desktopNotify('recovered', { input: label, durationMs: ev.durationMs });
       if (!anyAlarm()) alarmSound(false);
       log(`${label}: recovered after ${Math.round(ev.durationMs / 1000)} s`, 'info');
       publish.events();
@@ -138,15 +146,17 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   // Frozen audio (the level does not move): its own alarm, with its own log entry, next to the one of the silence detector.
   function handleFrozenEvent(ch, ev) {
     const inp = inputById(ch.id);
-    if (!inp) return;
-    const label = inputLabel(settings().language, inp);
+    if (!inp || inp.alerts === 'indicator') return;
+    const label = labelOf(inp);
     if (ev.type === 'alarm') {
       const rec = store.addEvent({ kind: 'dead-air', cause: 'frozen', start: ev.start, end: null, input: label, inputId: inp.id, thresholdDb: ch.eff.thresholdDb, minSilenceSec: inp.frozenSec, toleranceDb: inp.frozenToleranceDb });
       ch.frozenEventId = rec.id;
       ch.lastNotifyAt = now();
       send(inp, 'alarm', { cause: 'frozen', start: ev.start });
-      desktopNotify('alarm', { input: label });
-      alarmSound(true);
+      if (alertsOn(inp)) {
+        desktopNotify('alarm', { input: label });
+        alarmSound(true);
+      }
       log(`ALARM ${label}: frozen audio since ${new Date(ev.start).toISOString()}`, 'error');
     } else {
       // 'recovered': the level moves again; 'ended': the audio went away (silence or no data have their own alarm)
@@ -154,7 +164,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       ch.frozenEventId = null;
       if (ev.type === 'recovered') {
         send(inp, 'recovered', { cause: 'frozen', start: ev.start, end: ev.end, durationMs: ev.durationMs });
-        desktopNotify('recovered', { input: label, durationMs: ev.durationMs });
+        if (alertsOn(inp)) desktopNotify('recovered', { input: label, durationMs: ev.durationMs });
         log(`${label}: audio moving again after ${Math.round(ev.durationMs / 1000)} s`, 'info');
       }
       if (!anyAlarm()) alarmSound(false);
@@ -184,6 +194,11 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     // the traffic light stays green while the silence is shorter than the yellow delay of the input
     const raw = waiting || snap.status === 'idle' ? 'starting' : snap.status;
     if (fz.alarm && raw !== 'alarm') return { state: 'alarm', cause: 'frozen', fault: ch.fault, elapsedMs: fz.elapsedMs, remainingMs: 0, silenceStart: fz.start, thresholdDb: ch.eff.thresholdDb };
+    if (inputById(ch.id)?.alerts === 'indicator') {
+      // AUDIO YES / AUDIO NO: the level against the threshold (a drop shorter than the yellow delay is not "no"), no countdown
+      const yes = raw === 'ok' || (raw === 'counting' && !snap.yellow);
+      return { state: raw === 'starting' ? 'starting' : yes ? 'audio-yes' : 'audio-no', cause: null, fault: ch.fault, elapsedMs: 0, remainingMs: 0, silenceStart: null, thresholdDb: ch.eff.thresholdDb };
+    }
     const state = raw === 'counting' && !snap.yellow ? 'ok' : raw;
     return { state, cause: snap.cause, fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart, thresholdDb: ch.eff.thresholdDb };
   }
@@ -191,7 +206,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function status() {
     const s = settings();
     const inputs = s.inputs.map((inp) => {
-      const base = { id: inp.id, name: inputLabel(s.language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: chans.get(inp.id)?.eff.thresholdDb ?? inp.thresholdDb, minSilenceSec: chans.get(inp.id)?.eff.minSilenceSec ?? inp.minSilenceSec, channelPair: inp.channelPair, channelMono: inp.channelMono };
+      const base = { id: inp.id, name: inputOwnLabel(settings().language, inp), type: inp.type, enabled: inp.enabled, thresholdDb: chans.get(inp.id)?.eff.thresholdDb ?? inp.thresholdDb, minSilenceSec: chans.get(inp.id)?.eff.minSilenceSec ?? inp.minSilenceSec, channelPair: inp.channelPair, channelMono: inp.channelMono, alerts: inp.alerts || 'on', indicatorCounts: !!inp.indicatorCounts };
       const p = pauses.get(inp.id);
       if (p && p.until > now()) base.pausedUntil = p.until;
       const ch = chans.get(inp.id);
@@ -199,10 +214,17 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       if (!ch) return { ...base, state: inp.enabled ? 'incomplete' : 'off' };
       return { ...base, ...channelStatus(ch) };
     });
-    const live = inputs.filter((i) => PRIORITY[i.state]);
+    // What each input adds to the overall state: an input without alerts adds nothing; an indicator adds nothing unless it was set to count,
+    // and then AUDIO NO is a "counting" (yellow), never an alarm
+    for (const i of inputs) {
+      i.silent = i.alerts === 'off' || (i.alerts === 'indicator' && !i.indicatorCounts);
+      i.overallState = i.alerts === 'off' ? null : i.alerts === 'indicator' ? (!i.indicatorCounts ? null : i.state === 'audio-yes' ? 'ok' : i.state === 'audio-no' ? 'counting' : i.state) : i.state;
+    }
+    const live = inputs.filter((i) => PRIORITY[i.overallState]);
     const anyPaused = inputs.some((i) => i.state === 'paused');
-    const overall = !running ? 'idle' : !live.length ? (anyPaused ? 'paused' : 'idle') : live.reduce((w, i) => (PRIORITY[i.state] > PRIORITY[w] ? i.state : w), 'ok');
-    const count = (st) => live.filter((i) => i.state === st).length;
+    const onlyQuiet = running && !live.length && inputs.some((i) => i.silent && (PRIORITY[i.state] || i.state === 'audio-yes' || i.state === 'audio-no'));
+    const overall = !running ? 'idle' : !live.length ? (onlyQuiet ? 'ok' : anyPaused ? 'paused' : 'idle') : live.reduce((w, i) => (PRIORITY[i.overallState] > PRIORITY[w] ? i.overallState : w), 'ok');
+    const count = (st) => live.filter((i) => i.overallState === st).length;
     return {
       running,
       overall, // idle | paused | starting | ok | counting | alarm: the worst state of any input (paused: all of them are)
@@ -214,7 +236,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
 
   function emitStatus(force = false) {
     const st = status();
-    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.state, i.fault, i.cause, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
+    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.alerts, i.indicatorCounts, i.state, i.fault, i.cause, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
     if (force || key !== lastStatusKey) {
       lastStatusKey = key;
       publish.status(st);
@@ -327,7 +349,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       let p = pauses.get(id);
       if (p) p.until = untilMs;
       else {
-        const rec = store.addEvent({ kind: 'pause', cause: 'maintenance', start: t, end: null, input: inputLabel(settings().language, inp), inputId: id, until: untilMs });
+        const rec = store.addEvent({ kind: 'pause', cause: 'maintenance', start: t, end: null, input: labelOf(inp), inputId: id, until: untilMs });
         p = { until: untilMs, eventId: rec.id };
         pauses.set(id, p);
       }
