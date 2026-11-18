@@ -52,3 +52,16 @@ test('downloadInstaller keeps the file only when the SHA-256 matches', async () 
   await assert.rejects(downloadInstaller({ info, dir, fetchFn: mk('0'.repeat(64)), current: '1' }), /checksum-mismatch/);
   assert.deepEqual(fs.readdirSync(dir), []);
 });
+
+// 0.2.1: a backup imported from another version carries general.updateRepo and the check used that setting:
+// the update check always asks this app's own repository.
+test('the update check always asks this version\'s own repository, never the repository of a setting', async () => {
+  const fs = await import('node:fs');
+  const main = fs.readFileSync(new URL('../main.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(main, /checkForUpdate\(\{\s*repo:\s*s\.general\.updateRepo/);
+  assert.match(main, /checkForUpdate\(\{\s*repo:\s*REPO\b/);
+  const { REPO } = await import('../src/updater.js');
+  assert.equal(REPO, 'djgragra/dead-air-watchdog');
+  const { DEFAULT_SETTINGS } = await import('../src/store.js');
+  assert.equal(DEFAULT_SETTINGS.general.updateRepo, REPO);
+});

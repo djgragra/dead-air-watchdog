@@ -1,6 +1,9 @@
 node_modules/
 release/
+dist-engine/
+engine/target/
+engine/dist/
+.DS_Store
 *.log
 __pycache__/
-.DS_Store
 .claude/

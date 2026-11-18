@@ -149,3 +149,8 @@ test('26.11.2: channelMono is kept between 0 and 16; old settings without it mea
   assert.equal(b.channelMono, 16);
   assert.equal(c.channelMono, 0);
 });
+
+test('the logo reference of an input: a valid id is kept, anything else is none', () => {
+  const s = sanitizeSettings({ inputs: [{ id: 'a', type: 'stream', logo: 'lg0123456789ab' }, { id: 'b', type: 'stream', logo: '../../evil' }, { id: 'c', type: 'stream' }, { id: 'd', type: 'stream', logo: 42 }] });
+  assert.deepEqual(s.inputs.map((i) => i.logo), ['lg0123456789ab', '', '', '']);
+});

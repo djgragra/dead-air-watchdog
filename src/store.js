@@ -8,8 +8,10 @@ import { mapSecrets } from './secrets.js';
 import { parseAddresses } from './addresses.js';
 import { TEMPLATE_KINDS, TEMPLATE_LIMITS } from './messages.js';
 import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
+import { assignColors, isColor } from './core/stations.js';
 
 export const MAX_INPUTS = 32;
+export const MAX_STATIONS = 32;
 
 // Smallest size of the window in the normal and in the compact view.
 export const NORMAL_MIN = Object.freeze({ width: 760, height: 560 });
@@ -24,6 +26,8 @@ export const DEFAULT_INPUT = Object.freeze({
   type: 'stream', // 'stream' | 'device'
   deviceId: '', // device only; '' = system default input
   deviceLabel: '',
+  stationId: '', // the station this stream belongs to ('' = none); see `stations` and src/core/stations.js
+  logo: '', // id of the logo in the logo store (src/logos.js): several inputs can share one; '' = none
   channelPair: 0, // device only: 0 = channels 1-2, 1 = 3-4 … 7 = 15-16
   channelMono: 0, // device only: 0 = measure the pair above; 1-16 = measure that single channel (mono)
   streamUrl: '',
@@ -32,6 +36,8 @@ export const DEFAULT_INPUT = Object.freeze({
   yellowDelaySec: 2, // the traffic light of the input stays green until the audio has been below the threshold this long (0 = at once)
   frozenSec: 0, // 0 = off; otherwise: a level that stays (almost) the same for this long above the threshold is an alarm ("frozen audio")
   frozenToleranceDb: 1, // how much the level may vary and still count as the same
+  alerts: 'on', // 'on' (as always) | 'off' (no messages and no sound; still on the screen and in the log, outside the overall state) | 'indicator' (only AUDIO YES / AUDIO NO on the tile: no countdown, no alarm, no log)
+  indicatorCounts: false, // with 'indicator': AUDIO NO also counts in the overall state (as the yellow of "counting")
   microSilences: 'default', // micro-silences in the log for this input: 'default' (as in General) | 'on' | 'off'
   nowPlaying: false, // streams only: show the song title the server sends (ICY metadata) on the tile; off unless chosen, one extra short request every 20 s (src/now-playing.js)
   schedule: DEFAULT_SCHEDULE, // monitoring hours: see src/core/schedule.js
@@ -41,6 +47,7 @@ export const DEFAULT_INPUT = Object.freeze({
 export const DEFAULT_SETTINGS = Object.freeze({
   language: 'en', // 'en' | 'it' | 'es' — the app always starts in English until the user changes it
   theme: 'dark', // 'dark' | 'light' | 'auto'
+  stations: [], // { id, name, logo, featured, color }: a station groups the streams of one radio; `featured` is the input shown when it is closed
   inputs: [], // see DEFAULT_INPUT: any mix of sound cards (several, or several pairs of one) and streams, MAX_INPUTS in total
   installationName: '', // shown in alerts as [Dead Air Watchdog · name]; empty = the computer name
   display: {
@@ -49,6 +56,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     wallNameSize: 'auto', // size of the input names in the wall display: 'auto' (shrinks long names to fit) | 'xlarge' | 'large' | 'medium' | 'small'
     wallLogo: 'large', // logo of an input in the wall display: 'small' | 'medium' | 'large' | 'faded' (big, soft, behind the tile)
     wallLogoOpacity: 0.2, // how strong the 'faded' logo is (0.05 to 0.5)
+    view: 'inputs', // what the dashboard, the compact view and the wall display show: 'inputs' (a tile for each input) | 'stations' (a tile for each station, opened on its streams)
     wallClock: 'max' // size of the clock and date in the wall display: 'max' (as large as fits) | 'large' | 'normal'
   },
   notifications: {
@@ -71,12 +79,13 @@ export const DEFAULT_SETTINGS = Object.freeze({
     microSilences: true, // write the brief drops below the threshold (micro-silences) in the event log; an input can override it
     microRetentionDays: 30, // brief drops below the threshold (micro-silences) are kept for less time than the alarms
     checkUpdates: true,
-    updateRepo: 'djgragra/dead-air-watchdog'
+    updateRepo: 'djgragra/dead-air-watchdog' // not used by the update check (it always asks REPO of src/updater.js)
   },
   heartbeat: { enabled: false, url: '', intervalMin: 5 }, // dead man's switch: GET to a service that alerts when pings stop
   micExplained: false, // the permission explanation was shown and accepted
   closeHintShown: false,
   updateState: { skipVersion: '', remindUntil: 0, lastCheck: null }, // what the user decided about a new version; lastCheck { at, ok, error }
+  engineIntroSeen: false, // the window about the new audio engine and the stations was shown once (see whatsnew:get)
   lastSeenVersion: '', // the version that last ran: a newer one at start-up means "updated" (What's new window)
   window: { x: null, y: null, width: 1180, height: 780, maximized: false, compact: false, alwaysOnTop: false, hideMenuBar: false }, // remembered place and size of the main window, and its view (compact, always on top, menu bar hidden in the compact view)
   compactWindow: { x: null, y: null, width: 380, height: 0 } // place and size of the compact view (height 0 = from the number of inputs)
@@ -124,6 +133,7 @@ function sanitizeInput(raw, usedIds) {
   i.name = String(i.name || '').trim().slice(0, 60);
   i.deviceId = String(i.deviceId || '');
   i.deviceLabel = String(i.deviceLabel || '').slice(0, 200);
+  i.logo = typeof i.logo === 'string' && /^[\w-]{1,64}$/.test(i.logo) ? i.logo : '';
   i.channelPair = Math.round(clamp(i.channelPair, 0, 7, 0));
   i.channelMono = Math.round(clamp(i.channelMono, 0, 16, 0));
   i.streamUrl = String(i.streamUrl || '').trim().slice(0, 2000);
@@ -134,6 +144,8 @@ function sanitizeInput(raw, usedIds) {
   i.frozenSec = Number.isFinite(fz) && fz > 0 ? Math.round(clamp(fz, 10, 3600, 60)) : 0;
   i.frozenToleranceDb = Math.round(clamp(i.frozenToleranceDb, 0.1, 6, d.frozenToleranceDb) * 10) / 10;
   i.microSilences = ['default', 'on', 'off'].includes(i.microSilences) ? i.microSilences : d.microSilences;
+  i.alerts = ['on', 'off', 'indicator'].includes(i.alerts) ? i.alerts : 'on';
+  i.indicatorCounts = i.alerts === 'indicator' && i.indicatorCounts === true;
   i.nowPlaying = i.type === 'stream' && i.nowPlaying === true;
   i.schedule = sanitizeSchedule(i.schedule, { thresholdDb: i.thresholdDb, minSilenceSec: i.minSilenceSec });
   i.enabled = i.enabled !== false;
@@ -165,9 +177,28 @@ export function sanitizeSettings(s) {
   if (!['small', 'medium', 'large', 'faded'].includes(out.display.wallLogo)) out.display.wallLogo = d.display.wallLogo;
   out.display.wallLogoOpacity = Math.round(clamp(out.display.wallLogoOpacity, 0.05, 0.5, d.display.wallLogoOpacity) * 100) / 100;
   if (!['max', 'large', 'normal'].includes(out.display.wallClock)) out.display.wallClock = d.display.wallClock;
+  if (!['inputs', 'stations'].includes(out.display.view)) out.display.view = d.display.view;
   out.installationName = String(out.installationName || '').trim().slice(0, 60);
   const used = new Set();
   out.inputs = (Array.isArray(out.inputs) ? out.inputs : []).slice(0, MAX_INPUTS).map((raw) => sanitizeInput(raw, used));
+  // stations: a station has a name, a logo and the streams that point to it; an input of a station that does not exist is free again
+  const stationIds = new Set();
+  out.stations = (Array.isArray(out.stations) ? out.stations : []).slice(0, MAX_STATIONS).map((raw) => {
+    const st = isObj(raw) ? raw : {};
+    let id = String(st.id || '');
+    if (!/^[\w-]{1,64}$/.test(id) || stationIds.has(id)) id = randomUUID();
+    stationIds.add(id);
+    return {
+      id,
+      name: String(st.name || '').trim().slice(0, 60),
+      logo: typeof st.logo === 'string' && /^[\w-]{1,64}$/.test(st.logo) ? st.logo : '',
+      featured: typeof st.featured === 'string' ? st.featured.slice(0, 64) : '',
+      color: isColor(st.color) ? st.color.toLowerCase() : ''
+    };
+  });
+  assignColors(out.stations);
+  for (const i of out.inputs) i.stationId = typeof i.stationId === 'string' && stationIds.has(i.stationId) ? i.stationId : '';
+  for (const st of out.stations) if (!out.inputs.some((i) => i.id === st.featured && i.stationId === st.id)) st.featured = ''; // the one shown must be one of its streams
   out.notifications.reminderMin = Math.round(clamp(out.notifications.reminderMin, 0, 1440, 0));
   out.notifications.sound.enabled = !!out.notifications.sound.enabled;
   out.notifications.sound.volume = Math.round(clamp(out.notifications.sound.volume, 0.05, 1, 0.6) * 100) / 100;
@@ -202,6 +233,7 @@ export function sanitizeSettings(s) {
   const us = isObj(out.updateState) ? out.updateState : {};
   const lc = isObj(us.lastCheck) && Number.isFinite(us.lastCheck.at) ? { at: us.lastCheck.at, ok: !!us.lastCheck.ok, error: String(us.lastCheck.error || '').slice(0, 300) } : null;
   out.updateState = { skipVersion: String(us.skipVersion || '').slice(0, 40), remindUntil: Number.isFinite(us.remindUntil) ? us.remindUntil : 0, lastCheck: lc };
+  out.engineIntroSeen = out.engineIntroSeen === true;
   out.lastSeenVersion = String(out.lastSeenVersion || '').slice(0, 40);
   const w = isObj(out.window) ? out.window : {};
   const hasPos = Number.isFinite(w.x) && Number.isFinite(w.y);

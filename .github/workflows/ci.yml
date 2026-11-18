@@ -1,7 +1,7 @@
 name: CI
 
-# Runs the tests on every pull request and every push to main, so a change is checked before it is merged
-# (the release workflow only runs on tags and by hand).
+# Tests on every pull request and every push to main: the Rust engine (unit tests), the engine against real streams
+# (ffmpeg makes MP3, AAC and Ogg live streams), the Node side and the page. The release workflow only runs on tags and by hand.
 on:
   pull_request:
   push:
@@ -17,6 +17,12 @@ jobs:
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
       - uses: actions/checkout@v7
+      - name: System packages (sound library headers, ffmpeg for the stream tests)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev ffmpeg
+      - name: Engine unit tests
+        run: cargo test --manifest-path engine/Cargo.toml
+      - name: Build the engine (the Node tests start it)
+        run: cargo build --manifest-path engine/Cargo.toml
       - uses: actions/setup-node@v7
         with:
           node-version: 22

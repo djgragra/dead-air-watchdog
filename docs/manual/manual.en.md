@@ -10,7 +10,7 @@ The app is free and has no Apple or Microsoft certificate, so the first launch m
 
 - **Windows**: run the installer. If SmartScreen says "Windows protected your PC", click *More info* → *Run anyway*.
 - **macOS**: open the disk image and drag the app to Applications. The app is signed ad hoc, which is what an Apple silicon Mac needs to open it. The first start still shows the "unidentified developer" notice: open *System Settings → Privacy & Security*, scroll down and click *Open Anyway* (right-click → Open no longer exists on macOS 15 and later). If an earlier version says the app is "damaged", run this once in Terminal: `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`
-- **Linux**: make the AppImage executable (`chmod +x Dead-Air-Watchdog-*.AppImage`) and run it.
+- **Linux**: the app needs the system sound library **libasound2** (the audio engine is linked to it, even if you only monitor streams) and, to open an AppImage, FUSE. Install them first: Debian, Ubuntu and derivatives `sudo apt install libasound2 libfuse2` (Ubuntu 24.04 and Debian 13: `sudo apt install libasound2t64 libfuse2t64`); Fedora `sudo dnf install alsa-lib fuse-libs`; Arch `sudo pacman -S alsa-lib fuse2`. Then make the AppImage executable (`chmod +x Dead-Air-Watchdog-*.AppImage`) and run it. If libasound2 is missing the app opens anyway and a red banner says so, with these commands.
 
 The app always opens in English; choose Italiano or Español in the settings and the choice is remembered. The theme is dark by default, with light and system available.
 
@@ -18,7 +18,7 @@ The app always opens in English; choose Italiano or Español in the settings and
 
 ## How it works
 
-Every 100 ms the audio engine (a hidden window, so it keeps running when the main window is closed) computes the level of each channel, in **dBFS**. The loudest channel is compared with the threshold; **silence means all the channels are below it**.
+Every 100 ms the audio engine (a separate program, so it keeps running when the main window is closed) measures the level of each channel, in **dBFS**. The loudest channel is compared with the threshold; **silence means all the channels are below it**.
 
 - Below the threshold the input is *counting* (yellow). When it lasts at least the configured time, it becomes an *alarm* (red) and the alerts go out. The silence is dated from its first quiet moment.
 - The audio is *back* only after it stays at or above the threshold for 2 seconds in a row, or 2 seconds in total within 5 seconds: one click in a silent stretch does not restart the countdown, and speech with pauses between the words counts as audio.
@@ -37,9 +37,23 @@ In *Settings → Inputs* you add up to 32 inputs, in any mix:
 - **More options** of each input: *Yellow after…* (2 seconds by default: the traffic light stays green until the audio has been below the threshold that long), the **monitoring hours** (days and hours, also past midnight, in which the input is not monitored or has its own threshold and time) and the **frozen-audio alarm** (off by default: the level stays within a small range, 1 dB by default, for at least 10 seconds although it is above the threshold: a steady tone, a stuck loop or constant noise).
 - **Now playing (song title)**: in *More options* of a **stream**, *Show the song title (now playing) on the tile* (off by default). Many Icecast and Shoutcast servers announce the title of the song inside the stream; with this on, the app asks the server for it with one short extra request every 20 seconds (a few kilobytes, the audio read for it is thrown away), and shows it under the state of the input in the Dashboard, in the Compact view (while the input is OK) and in the Wall display. It runs only while monitoring and while the window is on screen. It never changes what is measured or when an alarm starts, it is not part of the alerts, and a server that sends no titles shows nothing.
 
+## Stations
+
+A radio often has several streams: Giornale Radio can have eight, GRNews two. A **station** groups them: one name, one logo, and the streams under it.
+
+- *Settings → Inputs → Stations → Create station*: give it a **name** and a **logo** (choose an image, or *Use a logo already loaded…*), and the **stream shown when the station is closed**: its song title (now playing) and its level are the ones the closed station shows.
+- The streams of a station are **inside its card**, and a stream that is in a station is no longer among the free ones. To put a stream in a station: **drag it by its grip ⠿** onto the station (to take it out, drag it onto the list of the free streams), or choose the station in the menu *Station* of the stream, or use *Add a stream you already set up* in the station card, or *Add a stream to this station* for a new one; *Take out of the station* does the opposite. A stream keeps its **own name and logo**, which replace those of the station. In a station give the streams short names (*Nazionale*): under their station they are shown with that name, and everywhere the streams are shown alone (the view *By input*, the alerts, the log) the station comes first (*Giornale Radio · Nazionale*; not repeated if the name has it). A stream with no name of its own is called after its station and its address.
+- Each station has a **colour** (given by the app, changeable in the station card); the station and its streams share it in every view, as a stripe at the side and the colour of the name, to show that they are a group.
+- The button **By station / By input** (at the top of the window, in the compact view and in the wall display) chooses what is shown, everywhere. By station, each station is one tile: logo, name, the state of its worst stream, and the song title and the level of the stream it shows. A closed station shows **one dot for each stream** (green, yellow, red, blue when paused; the name of the stream is its tooltip). A **yellow note** appears on the closed station as soon as one of its streams is counting a silence, before any alarm.
+- A click on the station **opens its streams**, each with its name, logo and state; another click closes them. A station in which a stream is in dead air **opens by itself** and cannot be closed until the audio is back. If many stations fall together, the first four open by themselves and the others stay closed in red, with a line *+N more stations in dead air*: a click opens them. The wall display works the same way, with the layout it always had (clock and state on top, large tiles): the station stays as its first tile, with the arrow to close it, followed by its streams; a click on the tile opens and closes it. The arrow is large and in colour so that it is seen.
+- The alerts do not change: one for each stream, now with **the station and the stream** (*Giornale Radio · Rete 1*; the station is not repeated if the name already has it). Streams that are in no station stay tiles of their own.
+- The backup saves the stations with their logos, and *Include the logos* can be switched off.
+
 ## Dashboard and wall display
 
 The **Dashboard** shows one big traffic light with the worst state of all the inputs (green: all OK; yellow: a countdown is running; red: dead air; grey: stopped) and one tile per input with its state, its countdown and a live level meter with the threshold marked.
+
+**Alerts of an input** (*Settings → Inputs → the input → Alerts*) have three modes. *On* is the usual one. *Off* keeps the input measured, shown and in the log but sends no message and no sound, and leaves it out of the overall state (the big ALL OK and the colour of the wall display): for an input that is only to be looked at. *Indicator* shows only **AUDIO YES / AUDIO NO** on the tile (the level against the threshold; a drop shorter than the yellow delay is not a NO), with no countdown, no alarm and no log; if you tick *AUDIO NO counts in the overall state* it is a yellow of the overall state, never an alarm and never a message. The tile says *alerts off* or *indicator*. It is not the pause: a pause ends by itself and shows PAUSED, this stays until you change it.
 
 On each tile, **Pause alerts for this input** switches the alerts of that input off for 1 hour or until tomorrow at 06:00 (for maintenance). The pause ends by itself, survives a restart and is written in the log; the input is still measured and shown as PAUSED.
 
@@ -108,6 +122,7 @@ Because the machines that run this app are often left alone, a new version is al
 | macOS: "the app is damaged / cannot be opened" | Open *System Settings → Privacy & Security → Open Anyway*; for an earlier version, run in Terminal `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`. |
 | Windows: "Windows protected your PC" | *More info* → *Run anyway*. |
 | Linux: the AppImage does not start | Make it executable (`chmod +x`) and install FUSE (`libfuse2`) if your system needs it. |
+| Linux: red banner "the audio engine cannot start" | The library `libasound2` is missing: install it (see *Installation*), then close and open the app. |
 | The sound card says "not found" | The saved device is gone: reconnect it, press *Refresh list* and choose it again. |
 | An input shows "offline" | The device is missing or the stream is down; the app reconnects by itself. |
 | No alert arrives | Use *Send test* in *Settings → Alerts* and read the error message. |

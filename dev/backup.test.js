@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildExport, prepareImport, missingSecrets, backupFileName, BACKUP_APP } from '../src/backup.js';
+import { buildExport, prepareImport, missingSecrets, backupFileName, backupTooBig, BACKUP_APP, MAX_BACKUP_BYTES } from '../src/backup.js';
 import { sanitizeSettings, MAX_INPUTS } from '../src/store.js';
 import { secretSlots, mapSecrets, stripSecrets } from '../src/secrets.js';
 
@@ -145,7 +145,7 @@ test('import: wrong app, damaged or oversized file are refused with a reason', (
   assert.equal(prepareImport({ settings: {} }, cur).error, 'wrong-app');
   assert.equal(prepareImport('{not json', cur).error, 'invalid');
   assert.equal(prepareImport('[1,2]', cur).error, 'invalid');
-  assert.equal(prepareImport('x'.repeat(2_000_001), cur).error, 'too-big');
+  assert.equal(prepareImport('x'.repeat(MAX_BACKUP_BYTES + 1), cur).error, 'too-big');
 });
 
 test('import: hand-edited values are brought back inside the limits', () => {
@@ -172,4 +172,93 @@ test('the one list of secrets covers email, Telegram, heartbeat, HTTP alerts and
 
 test('missingSecrets: nothing needed when nothing is configured', () => {
   assert.deepEqual(missingSecrets(sanitizeSettings({})), []);
+});
+
+// ---- logos travel inside the backup (0.2.1): the public app left them out, so a configuration moved to another
+// installation lost them
+// a PNG with a valid header (signature + IHDR) of w x h pixels, as the logo store checks them
+const png = (w, h) => {
+  const b = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+  b.writeUInt32BE(13, 8);
+  b.write('IHDR', 12, 'latin1');
+  b.writeUInt32BE(w, 16);
+  b.writeUInt32BE(h, 20);
+  return `data:image/png;base64,${b.toString('base64')}`;
+};
+
+// the two inputs of base() with logos of the library
+const withLogo = (map) => {
+  const s = base();
+  for (const i of s.inputs) i.logo = map[i.id] ?? '';
+  return s;
+};
+
+test('logos: only the logos the inputs use go into the file, once each even if several inputs share one; none, no key', () => {
+  assert.equal('logos' in buildExport(base(), { now: NOW }), false);
+  assert.equal('logos' in buildExport(withLogo({ a1: 'lgA' }), { now: NOW, logos: {} }), false);
+  const f = buildExport(withLogo({ a1: 'lgA', b2: 'lgA' }), { now: NOW, logos: { lgA: png(64, 64), lgUnused: png(8, 8) } });
+  assert.deepEqual(Object.keys(f.logos), ['lgA'], 'a logo shared by two inputs is in the file once; one nobody uses is not');
+  assert.deepEqual(f.inputs.map((i) => i.logo), ['lgA', 'lgA']);
+});
+
+test('logos: a logo that was removed from its input (empty reference) is never exported, even if a file with the input name is still there', () => {
+  const f = buildExport(base(), { now: NOW, logos: { a1: png(64, 64), b2: png(64, 64) } });
+  assert.equal('logos' in f, false);
+});
+
+test('logos: replace brings the logos of every imported input back, shared ones once; each one is checked again', () => {
+  const f = buildExport(withLogo({ a1: 'lgA', b2: 'lgB' }), { now: NOW, logos: { lgA: png(256, 128), lgB: png(32, 32) } });
+  f.logos.lgB = 'data:image/png;base64,AAAA'; // damaged
+  f.logos.stranger = png(8, 8); // a logo no input of the file uses
+  const plan = prepareImport(JSON.parse(JSON.stringify(f)), sanitizeSettings({}));
+  assert.ok(plan.ok);
+  assert.deepEqual(Object.keys(plan.logos), ['lgA'], 'the damaged one and the stranger are left out, the import goes on');
+  assert.equal(plan.settings.inputs.length, 2);
+  assert.deepEqual(plan.settings.inputs.map((i) => i.logo), ['lgA', 'lgB']);
+});
+
+test('logos: a picture that is too big (side above 512 px) is left out', () => {
+  const f = buildExport(withLogo({ a1: 'lgA', b2: 'lgB' }), { now: NOW, logos: { lgA: png(600, 100), lgB: png(512, 512) } });
+  const plan = prepareImport(JSON.parse(JSON.stringify(f)), sanitizeSettings({}));
+  assert.deepEqual(Object.keys(plan.logos), ['lgB']);
+});
+
+test('logos: "add" brings the logos of the inputs it adds only, never those of inputs the PC already has', () => {
+  const f = buildExport(withLogo({ a1: 'lgA', b2: 'lgB' }), { now: NOW, logos: { lgA: png(64, 64), lgB: png(64, 64) } });
+  const cur = sanitizeSettings({ inputs: [{ id: 'a1', type: 'stream', name: 'Mine', streamUrl: 'http://x.example.org/live' }] });
+  const plan = prepareImport(JSON.parse(JSON.stringify(f)), cur, { mode: 'add' });
+  assert.equal(plan.added, 1);
+  assert.deepEqual(Object.keys(plan.logos), ['lgB']);
+});
+
+test('logos: a file of 0.2.1 (logos keyed by input, no reference in the inputs) still brings its logos, named after the input', () => {
+  const old = buildExport(base(), { now: NOW });
+  old.logos = { a1: png(64, 64), b2: png(64, 64), zzz: png(8, 8) };
+  const plan = prepareImport(JSON.parse(JSON.stringify(old)), sanitizeSettings({}));
+  assert.deepEqual(Object.keys(plan.logos).sort(), ['a1', 'b2']);
+  assert.deepEqual(plan.settings.inputs.map((i) => i.logo), ['a1', 'b2']);
+});
+
+test('logos: a file without any (made by the public version) imports as before, with an empty list and no logo', () => {
+  const plan = prepareImport(buildExport(base(), { now: NOW }), sanitizeSettings({}));
+  assert.ok(plan.ok);
+  assert.deepEqual(plan.logos, {});
+  assert.deepEqual(plan.settings.inputs.map((i) => i.logo), ['', '']);
+});
+
+test('logos: a hand-edited "logos" that is not an object does no harm', () => {
+  const f = buildExport(base(), { now: NOW });
+  f.logos = ['x'];
+  assert.deepEqual(prepareImport(f, sanitizeSettings({})).logos, {});
+  f.logos = 'text';
+  assert.deepEqual(prepareImport(f, sanitizeSettings({})).logos, {});
+});
+
+test('logos: what the app writes it can read: 32 different logos of the largest size fit, and a file above the limit is refused', () => {
+  assert.ok(MAX_BACKUP_BYTES >= 32 * Math.ceil(400_000 * 4 / 3) + 100_000);
+  assert.equal(backupTooBig('x'.repeat(MAX_BACKUP_BYTES)), false);
+  assert.equal(backupTooBig('x'.repeat(MAX_BACKUP_BYTES + 1)), true);
+  assert.equal(backupTooBig('à'.repeat(MAX_BACKUP_BYTES / 2)), false, 'the size is counted in bytes, not characters');
+  assert.equal(backupTooBig('à'.repeat(MAX_BACKUP_BYTES / 2 + 1)), true);
 });

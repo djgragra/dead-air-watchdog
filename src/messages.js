@@ -188,18 +188,40 @@ export function t(lang, key, vars = {}) {
   return s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
 }
 
-// Human-readable name of an input for alerts and the log: the name given by the user, else the
-// stream host (never the full URL: it can carry credentials) or the device name.
-export function inputLabel(lang, input) {
+// Human-readable name of an input. `inputOwnLabel`: what the stream is called by itself (the tiles show the station next to it):
+// its name; else the stream host (never the full URL: it can carry credentials) or the device name.
+// `inputLabel`: the name in alerts, the log and the report: "Station · Stream" for a stream of a station, so that the message
+// tells the radio and the stream (a stream without a name of its own is "Station · host").
+export function inputOwnLabel(lang, input) {
   if (input.name) return input.name;
   if (input.type === 'stream') {
+    let host = '?';
     try {
-      return t(lang, 'input.stream', { host: new URL(input.streamUrl).host.replace(/^.*@/, '') });
+      host = new URL(input.streamUrl).host.replace(/^.*@/, '');
     } catch {
-      return t(lang, 'input.stream', { host: '?' });
+      /* host stays "?" */
     }
+    return t(lang, 'input.stream', { host });
   }
   return input.deviceLabel || t(lang, 'input.defaultDevice');
+}
+
+export function inputLabel(lang, input, stations = []) {
+  const station = input.stationId ? (stations || []).find((s) => s.id === input.stationId) : null;
+  const sname = station && station.name ? station.name : '';
+  if (input.name) return sname && !input.name.toLowerCase().includes(sname.toLowerCase()) ? `${sname} · ${input.name}` : input.name;
+  if (input.type === 'stream') {
+    if (!sname) return inputOwnLabel(lang, input);
+    let host = '?';
+    try {
+      host = new URL(input.streamUrl).host.replace(/^.*@/, '');
+    } catch {
+      /* host stays "?" */
+    }
+    return `${sname} · ${host}`;
+  }
+  if (sname) return input.deviceLabel ? `${sname} · ${input.deviceLabel}` : sname;
+  return inputOwnLabel(lang, input);
 }
 
 // Messages the user can word differently (Settings → Alerts). Empty = the text of the app. The placeholders of each one:

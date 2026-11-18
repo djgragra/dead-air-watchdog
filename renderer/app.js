@@ -6,6 +6,7 @@ import { TEMPLATE_KINDS, TEMPLATE_VARS } from '../src/messages.js';
 import { parseAddresses } from '../src/addresses.js';
 import { moveItem } from '../src/core/order.js';
 import { wallGrid } from '../src/core/wall-grid.js';
+import { viewItems, logoIdFor, PALETTE } from '../src/core/stations.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 import { hasTransparentEdge } from '../src/core/logo-alpha.js';
 import { findCommonProblems } from '../src/core/report.js';
@@ -38,9 +39,12 @@ let upd = { view: null, phase: 'idle', pct: 0, got: 0, total: 0, error: '', afte
 let activeTab = 'inputs';
 let wall = false;
 let cursorTimer = null;
-let logos = {}; // input id -> PNG data URL
+let logos = {}; // logo id -> PNG data URL (the library; an input points to its logo with `logo`)
 let nowPlaying = {}; // input id -> song title that the stream announces (only inputs that asked for it)
 const tiles = new Map(); // input id -> { root, name, type, state, sub, fault, rows }
+const stationTiles = new Map(); // station id -> a tile of the same shape: the view by station (src/core/stations.js)
+const manualOpen = {}; // station id -> true: the stations the person opened (a station with a stream in dead air is open anyway)
+let visibleTiles = 0; // the tiles on screen: what the wall grid has to fit
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -159,7 +163,9 @@ function faultText(reason) {
   return FAULTS.includes(reason) ? t(`fault.${reason}`) : t('fault.other', { reason });
 }
 
-const namesOf = (state) => status.inputs.filter((i) => i.state === state).map((i) => i.name).join(', ');
+// the inputs that make the overall state: the ones without alerts, and the indicators not set to count, are left out
+const namesOf = (state) => status.inputs.filter((i) => i.overallState === state).map((i) => i.name).join(', ');
+const LIVE_STATES = ['ok', 'counting', 'alarm', 'starting', 'paused', 'audio-yes', 'audio-no']; // states in which the tile shows a level
 
 function renderStatus() {
   const overall = status.running ? status.overall : 'idle';
@@ -179,7 +185,7 @@ function renderStatus() {
   $('heroSub').textContent = sub;
   $('wallState').textContent = overall === 'alarm' ? `${word} · ${namesOf('alarm')}` : overall === 'counting' ? `${word} · ${namesOf('counting')}` : word;
 
-  const faulty = status.running ? status.inputs.filter((i) => i.fault) : [];
+  const faulty = status.running ? status.inputs.filter((i) => i.fault && !i.silent) : []; // an input without alerts does not add its problem to the big banner
   const msg = startError || faulty.map((i) => `${i.name}: ${faultText(i.fault)}`).join(' · ');
   const fault = $('heroFault');
   fault.textContent = msg ? (startError ? msg : t('st.fault', { reason: msg })) : '';
@@ -277,14 +283,24 @@ function fitWallGrid() {
     box.style.removeProperty('grid-template-rows');
     return;
   }
-  const { cols, rows } = wallGrid(tiles.size, box.clientWidth, box.clientHeight);
+  const { cols, rows } = wallGrid(visibleTiles || tiles.size, box.clientWidth, box.clientHeight);
   box.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
   box.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
 }
 
-function tileFor(input) {
-  let tile = tiles.get(input.id);
-  if (tile) return tile;
+// The area of the tiles changes when the window goes full screen (an animation on the Mac), when the clock and the
+// header take their size, when a font loads: the grid follows every change of the area, not only the resize of the window
+// (0.2.3: on the Mac the wall display sometimes showed two rows of six almost square tiles until the window had settled).
+let wallObserver = null;
+function watchWallArea() {
+  if (wallObserver || typeof ResizeObserver === 'undefined') return;
+  wallObserver = new ResizeObserver(() => {
+    if (wall) requestAnimationFrame(() => { fitWallGrid(); fitWallNames(); });
+  });
+  wallObserver.observe($('tiles'));
+}
+
+function buildTile() {
   const root = el('article', 'tile');
   const head = el('div', 'tile__head');
   const name = el('div', 'tile__name');
@@ -305,8 +321,13 @@ function tileFor(input) {
   const blips = el('button', 'tile__blips hidden');
   blips.type = 'button';
   const np = el('div', 'tile__np hidden'); // song title (now playing), for the streams that asked for it
+  const chip = el('span', 'tile__chip hidden'); // the station of a stream (shown in the wall display, where the streams of an open station stand apart)
+  const note = el('div', 'tile__note hidden'); // station: a stream is counting a silence (yellow), the alarm has not started
+  const caret = el('span', 'tile__caret hidden'); // station: closed or open
+  const dots = el('div', 'tile__dots hidden'); // station, closed: one dot for each stream with its state
+  head.prepend(caret);
   const body = el('div', 'tile__body');
-  body.append(head, state, sub, np, fault, blips);
+  body.append(chip, head, state, sub, dots, note, np, fault, blips);
   root.append(art, body);
   const rows = [0, 1].map(() => {
     const row = el('div', 'meter__row');
@@ -323,8 +344,37 @@ function tileFor(input) {
   });
   pause.addEventListener('click', (e) => openPauseMenu(root.dataset.id, pause, e));
   blips.addEventListener('click', () => showMicroLog(root.dataset.id));
-  tile = { root, logo, artImg, art, pause, blips, name, type, state, sub, np, fault, rows };
+  return { root, logo, artImg, art, pause, blips, name, type, state, sub, np, fault, rows, chip, note, caret, dots };
+}
+
+function tileFor(input) {
+  let tile = tiles.get(input.id);
+  if (tile) return tile;
+  tile = buildTile();
   tiles.set(input.id, tile);
+  return tile;
+}
+
+// The tile of a station: the same shape as the one of an input, so that the dashboard, the compact view and the wall display
+// draw it with the styles they already have. Clicking it opens or closes the streams under it.
+function stationTileFor(station) {
+  let tile = stationTiles.get(station.id);
+  if (tile) return tile;
+  tile = buildTile();
+  tile.root.classList.add('tile--station');
+  tile.root.dataset.station = station.id;
+  tile.root.tabIndex = 0;
+  tile.root.setAttribute('role', 'button');
+  const toggle = () => {
+    if (tile.alarm) return; // a station in dead air stays open (one that the cap kept closed can be opened by hand)
+    manualOpen[station.id] = !manualOpen[station.id];
+    renderTiles();
+  };
+  tile.root.addEventListener('click', toggle);
+  tile.root.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+  });
+  stationTiles.set(station.id, tile);
   return tile;
 }
 
@@ -339,61 +389,195 @@ function resetTileMeter(tile) {
   }
 }
 
+// The logo of a tile (the one next to the name, the big one of the wall display, the soft background).
+function setTileLogo(tile, logoSrc) {
+  if (tile.logoSrc === logoSrc) return;
+  tile.logoSrc = logoSrc;
+  for (const img of [tile.logo, tile.artImg]) {
+    if (logoSrc) img.src = logoSrc;
+    else img.removeAttribute('src');
+    markAlpha(img, logoSrc);
+  }
+  tile.logo.classList.toggle('hidden', !logoSrc);
+  tile.root.classList.toggle('has-logo', !!logoSrc);
+  if (logoSrc) tile.root.style.setProperty('--tile-logo', `url("${logoSrc}")`);
+  else tile.root.style.removeProperty('--tile-logo');
+}
+
+// One input (or one stream of a station). logoId: the logo it shows (its own, or its station's); station: the station it is in, if any.
+// grouped: drawn under its station tile (just its own name); else, if it is in a station, the station's name goes before it.
+function updateInputTile(inp, tile, logoId, station, grouped) {
+  tile.root.classList.toggle('tile--member', !!station && grouped);
+  tile.chip.classList.add('hidden');
+  setGroupColor(tile, station);
+  tile.root.dataset.state = inp.state;
+  tile.root.dataset.id = inp.id;
+  const shown = station && !grouped ? inputNameWithStation(inp.name, station) : inp.name;
+  tile.name.textContent = shown;
+  tile.name.title = shown; // the full name, when a long one is cut
+  setTileLogo(tile, logos[logoId] || '');
+  const devName = inp.type === 'device' ? settings.inputs.find((i) => i.id === inp.id)?.deviceLabel : '';
+  const quiet = inp.alerts === 'off' ? ` · ${t('tile.alertsOff')}` : inp.alerts === 'indicator' ? ` · ${t('tile.indicator')}` : '';
+  tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream') + quiet;
+  tile.type.title = devName || ''; // the device name is a tooltip: a long name in the line pushed the name of the input out of the tile
+  tile.state.textContent = t(`st.${inp.state}`);
+  const paused = inp.state === 'paused';
+  tile.pause.title = t('pause.btn');
+  tile.pause.setAttribute('aria-label', t('pause.btn'));
+  tile.pause.classList.toggle('hidden', !status.running || !!inp.scheduled || !LIVE_STATES.includes(inp.state));
+  renderTileBlips(tile, inp.id);
+  let sub = '';
+  if (paused && inp.scheduled) sub = t('st.sub.scheduled', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
+  else if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
+  else if (inp.state === 'counting') sub = t('st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
+  else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
+  else if (inp.state === 'ok') sub = t('meter.threshold', { db: inp.thresholdDb });
+  tile.sub.textContent = sub;
+  tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
+  renderTileNowPlaying(tile, inp);
+  const pair = inp.type === 'device' ? inp.channelPair || 0 : 0;
+  const mono = inp.type === 'device' ? inp.channelMono || 0 : 0;
+  tile.root.classList.toggle('tile--mono', mono > 0); // one single channel: one meter
+  tile.rows[0].ch.textContent = mono ? String(mono) : pair ? String(pair * 2 + 1) : t('meter.ch1');
+  tile.rows[1].ch.textContent = pair ? String(pair * 2 + 2) : t('meter.ch2');
+  for (const r of tile.rows) r.thr.style.left = `${pctOf(inp.thresholdDb)}%`;
+  if (!LIVE_STATES.includes(inp.state)) resetTileMeter(tile);
+}
+
+// One station: its name and logo, the worst state of its streams, and the song title and the level of the stream it shows.
+// The colour of a station on its tile and on the tiles of its streams: a stripe at the side and a tint of the name.
+function setGroupColor(tile, station) {
+  const color = station && station.color;
+  tile.root.classList.toggle('has-grp', !!color);
+  if (color) tile.root.style.setProperty('--grp', color);
+  else tile.root.style.removeProperty('--grp');
+}
+
+// "Giornale Radio · Nazionale"; the station is not repeated when the name has it already.
+function inputNameWithStation(name, station) {
+  const sname = station.name || '';
+  return !sname || String(name).toLowerCase().includes(sname.toLowerCase()) ? name : `${sname} · ${name}`;
+}
+
+function updateStationTile(item, tile, byStatus) {
+  const { station, members, agg, featured, open } = item;
+  const stateOf = (id) => byStatus.get(id)?.state;
+  const byLabel = (id) => byStatus.get(id)?.name || '';
+  const featuredInput = status.inputs.find((i) => i.id === featured);
+  tile.featuredId = featured;
+  tile.alarm = agg.counts.alarm > 0 && !item.capped;
+  tile.root.dataset.state = agg.state;
+  tile.root.dataset.id = '';
+  tile.root.classList.toggle('is-open', open);
+  tile.root.setAttribute('aria-expanded', String(open));
+  tile.caret.classList.remove('hidden');
+  tile.caret.textContent = open ? '▾' : '▸';
+  tile.caret.title = t(open ? 'station.close' : 'station.open');
+  setGroupColor(tile, station);
+  tile.name.textContent = station.name || t('station.unnamed');
+  tile.name.title = station.name;
+  setTileLogo(tile, logos[station.logo] || '');
+  tile.type.textContent = t('station.streams', { n: agg.counts.total });
+  tile.type.title = '';
+  tile.state.textContent = t(`st.${agg.state}`);
+  tile.pause.classList.add('hidden');
+  tile.blips.classList.add('hidden');
+  const c = agg.counts;
+  // the dead-air and the yellow of the streams, in words, on the closed station (the open one shows each stream)
+  let sub = '';
+  if (c.alarm) sub = t('station.sub.alarm', { n: c.alarm, total: c.total });
+  else if (c.counting) sub = t('station.sub.counting', { n: c.counting, total: c.total });
+  else if (agg.state === 'ok') sub = t('station.sub.ok', { n: c.ok, total: c.total });
+  tile.sub.textContent = sub;
+  tile.note.textContent = c.counting && !c.alarm ? t('station.note.yellow', { n: c.counting }) : '';
+  tile.note.classList.toggle('hidden', !(c.counting && !c.alarm));
+  tile.fault.textContent = '';
+  // a closed station shows each stream as a dot (green, yellow, red, blue paused), so a stream that turns yellow can be seen
+  // and told which one it is (the name is the tooltip)
+  tile.dots.classList.toggle('hidden', open || members.length < 2);
+  if (!open) {
+    const want = members.map((m) => ({ id: m.id, st: stateOf(m.id) || 'idle', name: byLabel(m.id) }));
+    const key = want.map((w) => `${w.id}:${w.st}`).join('|');
+    if (tile.dotsKey !== key) {
+      tile.dotsKey = key;
+      tile.dots.replaceChildren(...want.map((w) => {
+        const d = el('span', 'sdot');
+        d.dataset.state = w.st;
+        d.title = `${w.name} · ${t(`st.${w.st}`)}`;
+        return d;
+      }));
+    }
+  }
+  if (featuredInput) {
+    renderTileNowPlaying(tile, featuredInput);
+    for (const r of tile.rows) r.thr.style.left = `${pctOf(featuredInput.thresholdDb)}%`;
+    const mono = featuredInput.type === 'device' ? featuredInput.channelMono || 0 : 0;
+    tile.root.classList.toggle('tile--mono', mono > 0);
+    tile.rows[0].ch.textContent = t('meter.ch1');
+    tile.rows[1].ch.textContent = t('meter.ch2');
+    if (!LIVE_STATES.includes(featuredInput.state)) resetTileMeter(tile);
+  } else {
+    resetTileMeter(tile);
+  }
+}
+
 function renderTiles() {
   const box = $('tiles');
   const list = status.inputs;
-  for (const id of [...tiles.keys()]) {
-    if (!list.some((i) => i.id === id)) {
-      tiles.get(id).root.remove();
-      tiles.delete(id);
+  const stations = settings.stations || [];
+  const byStatus = new Map(list.map((i) => [i.id, i]));
+  const stationMode = settings.display.view === 'stations' && stations.length > 0;
+  const stateOf = (id) => {
+    const i = byStatus.get(id);
+    return i && i.silent ? 'silent' : i?.state; // an input without alerts does not colour its station
+  };
+  const items = stationMode ? viewItems(stations, settings.inputs, stateOf, manualOpen) : list.map((i) => ({ kind: 'input', input: i }));
+  const order = []; // what goes on screen, in order: { root, hidden }
+  const stationOf = new Map();
+  for (const it of items) {
+    if (it.kind === 'station') {
+      const tile = stationTileFor(it.station);
+      updateStationTile(it, tile, byStatus);
+      // in the wall display the streams of an open station stand apart (a station tile that is open would only repeat them)
+      order.push({ root: tile.root, hidden: false });
+      for (const m of it.members) {
+        stationOf.set(m.id, { station: it.station, open: it.open });
+        const inp = byStatus.get(m.id);
+        if (inp) order.push({ root: tileFor(inp).root, hidden: !it.open, input: inp, station: it.station, grouped: true });
+      }
+    } else {
+      const inp = byStatus.get(it.input.id);
+      const mine = settings.inputs.find((x) => x.id === it.input.id);
+      const st = mine && mine.stationId ? stations.find((x) => x.id === mine.stationId) : null;
+      if (inp) order.push({ root: tileFor(inp).root, hidden: false, input: inp, station: st || undefined, grouped: false });
     }
   }
-  list.forEach((inp, idx) => {
-    const tile = tileFor(inp);
-    if (box.children[idx] !== tile.root) box.insertBefore(tile.root, box.children[idx] || null);
-    tile.root.dataset.state = inp.state;
-    tile.root.dataset.id = inp.id;
-    tile.name.textContent = inp.name;
-    tile.name.title = inp.name; // the full name, when a long one is cut
-    const logoSrc = logos[inp.id] || '';
-    if (tile.logoSrc !== logoSrc) {
-      tile.logoSrc = logoSrc;
-      for (const img of [tile.logo, tile.artImg]) {
-        if (logoSrc) img.src = logoSrc;
-        else img.removeAttribute('src');
-        markAlpha(img, logoSrc);
-      }
-      tile.logo.classList.toggle('hidden', !logoSrc);
-      tile.root.classList.toggle('has-logo', !!logoSrc);
-      if (logoSrc) tile.root.style.setProperty('--tile-logo', `url("${logoSrc}")`);
-      else tile.root.style.removeProperty('--tile-logo');
+  // tiles of inputs or stations that are gone, or of stations while the view is by input
+  const live = new Set(order.map((o) => o.root));
+  for (const [id, tile] of [...tiles]) {
+    if (!byStatus.has(id)) { tile.root.remove(); tiles.delete(id); }
+  }
+  for (const [id, tile] of [...stationTiles]) {
+    if (!live.has(tile.root)) {
+      if (!stations.some((st) => st.id === id)) stationTiles.delete(id);
+      tile.root.remove();
     }
-    const devName = inp.type === 'device' ? settings.inputs.find((i) => i.id === inp.id)?.deviceLabel : '';
-    tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream');
-    tile.type.title = devName || ''; // the device name is a tooltip: a long name in the line pushed the name of the input out of the tile
-    tile.state.textContent = t(`st.${inp.state}`);
-    const paused = inp.state === 'paused';
-    tile.pause.title = t('pause.btn');
-    tile.pause.setAttribute('aria-label', t('pause.btn'));
-    tile.pause.classList.toggle('hidden', !status.running || !!inp.scheduled || !['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state));
-    renderTileBlips(tile, inp.id);
-    let sub = '';
-    if (paused && inp.scheduled) sub = t('st.sub.scheduled', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
-    else if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
-    else if (inp.state === 'counting') sub = t('st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
-    else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
-    else if (inp.state === 'ok') sub = t('meter.threshold', { db: inp.thresholdDb });
-    tile.sub.textContent = sub;
-    tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
-    renderTileNowPlaying(tile, inp);
-    const pair = inp.type === 'device' ? inp.channelPair || 0 : 0;
-    const mono = inp.type === 'device' ? inp.channelMono || 0 : 0;
-    tile.root.classList.toggle('tile--mono', mono > 0); // one single channel: one meter
-    tile.rows[0].ch.textContent = mono ? String(mono) : pair ? String(pair * 2 + 1) : t('meter.ch1');
-    tile.rows[1].ch.textContent = pair ? String(pair * 2 + 2) : t('meter.ch2');
-    for (const r of tile.rows) r.thr.style.left = `${pctOf(inp.thresholdDb)}%`;
-    if (!['ok', 'counting', 'alarm', 'starting', 'paused'].includes(inp.state)) resetTileMeter(tile);
+  }
+  order.forEach((o, idx) => {
+    if (box.children[idx] !== o.root) box.insertBefore(o.root, box.children[idx] || null);
+    o.root.hidden = o.hidden;
+    if (o.input) {
+      const tile = tiles.get(o.input.id);
+      const own = settings.inputs.find((x) => x.id === o.input.id);
+      updateInputTile(o.input, tile, logoIdFor(own || {}, o.station), o.station, o.grouped);
+    }
   });
+  const more = items.filter((it) => it.capped).length;
+  const banner = $('tilesMore');
+  banner.textContent = more ? t('station.more', { n: more }) : '';
+  banner.classList.toggle('hidden', !more);
+  visibleTiles = order.filter((o) => !o.hidden).length;
+  document.body.dataset.view = stationMode ? 'stations' : 'inputs';
   fitWallGrid();
   fitWallNames();
 }
@@ -413,6 +597,10 @@ function renderNowPlaying() {
   for (const inp of status.inputs) {
     const tile = tiles.get(inp.id);
     if (tile) renderTileNowPlaying(tile, inp);
+  }
+  for (const st of stationTiles.values()) { // a closed station shows the song title of its featured stream
+    const inp = status.inputs.find((i) => i.id === st.featuredId);
+    if (inp) renderTileNowPlaying(st, inp);
   }
 }
 
@@ -493,7 +681,7 @@ function onLevels(batch) {
   // In Settings each input shows its level, so that "which card is which" can be found by playing something into one.
   if (!$('view-settings').classList.contains('hidden')) {
     for (const [id, lv] of Object.entries(batch)) {
-      const live = $('inputsList').querySelector(`.input__live[data-live="${CSS.escape(id)}"]`);
+      const live = document.querySelector(`.input__live[data-live="${CSS.escape(id)}"]`);
       const db = Math.max(lv.rms[0] ?? -Infinity, lv.rms[1] ?? -Infinity);
       if (live) {
         live.textContent = Number.isFinite(db) ? `${formatDb(db)} dB` : '';
@@ -502,22 +690,28 @@ function onLevels(batch) {
     }
   }
   for (const [id, lv] of Object.entries(batch)) {
-    const tile = tiles.get(id);
     const inp = status.inputs.find((i) => i.id === id);
-    if (!tile || !inp) continue;
-    tile.rows.forEach((r, c) => {
-      const db = lv.rms[c] ?? lv.rms[0];
-      const pk = lv.peak[c] ?? lv.peak[0];
-      if (db === undefined) return;
-      r.fill.style.width = `${pctOf(db)}%`;
-      r.fill.classList.toggle('is-low', db < inp.thresholdDb);
-      r.fill.classList.toggle('is-hot', db > -3);
-      r.num.textContent = formatDb(db);
-      if (pk >= r.hold.db) r.hold = { db: pk, at: now };
-      else if (now - r.hold.at > 1200) r.hold = { db: Math.max(pk, r.hold.db - 3), at: r.hold.at }; // hold 1.2 s, then fall
-      r.peak.style.left = `${pctOf(r.hold.db)}%`;
-    });
+    if (!inp) continue;
+    const tile = tiles.get(id);
+    if (tile) paintMeters(tile, lv, inp, now);
+    for (const st of stationTiles.values()) if (st.featuredId === id) paintMeters(st, lv, inp, now); // a closed station shows the level of its featured stream
   }
+}
+
+// The two level meters of a tile: level, the colour below the threshold and above -3 dB, and the peak that is held 1.2 s.
+function paintMeters(tile, lv, inp, now) {
+  tile.rows.forEach((r, c) => {
+    const db = lv.rms[c] ?? lv.rms[0];
+    const pk = lv.peak[c] ?? lv.peak[0];
+    if (db === undefined) return;
+    r.fill.style.width = `${pctOf(db)}%`;
+    r.fill.classList.toggle('is-low', db < inp.thresholdDb);
+    r.fill.classList.toggle('is-hot', db > -3);
+    r.num.textContent = formatDb(db);
+    if (pk >= r.hold.db) r.hold = { db: pk, at: now };
+    else if (now - r.hold.at > 1200) r.hold = { db: Math.max(pk, r.hold.db - 3), at: r.hold.at }; // hold 1.2 s, then fall
+    r.peak.style.left = `${pctOf(r.hold.db)}%`;
+  });
 }
 
 // ---- wall display ----------------------------------------------------------------------------
@@ -542,6 +736,8 @@ async function setWall(on, tell = true) {
   document.body.classList.remove('idle-cursor');
   wakeCursor();
   renderStatus();
+  // the window may still be changing size (full screen): look again while it settles
+  for (const ms of [150, 500, 1200]) setTimeout(() => { if (wall) { fitWallGrid(); fitWallNames(); } }, ms);
 }
 
 function wakeCursor() {
@@ -860,7 +1056,7 @@ function fillDeviceSelect(sel, selectedId, selectedLabel) {
 
 // In every device list, a device already chosen by another input (with the same pair of channels) is marked.
 function markUsedDevices() {
-  const picks = [...$('inputsList').querySelectorAll('.input[data-type="device"]')].map((card) => ({ card, id: card.querySelector('.in-device')?.value ?? '', pair: card.querySelector('.in-chan')?.value ?? '0' }));
+  const picks = flowCards().filter((c) => c.dataset.type === 'device').map((card) => ({ card, id: card.querySelector('.in-device')?.value ?? '', pair: card.querySelector('.in-chan')?.value ?? '0' }));
   for (const { card, id, pair } of picks) {
     const sel = card.querySelector('.in-device');
     if (!sel) continue;
@@ -928,7 +1124,7 @@ function inputTitle(card) {
 }
 
 function cardLogo(card) {
-  return card._logo !== undefined ? card._logo : logos[card.dataset.id] || null;
+  return card._logo !== undefined ? card._logo : logos[card._logoId] || null;
 }
 
 function refreshCardLogo(card) {
@@ -944,6 +1140,60 @@ function refreshCardLogo(card) {
   img.classList.toggle('hidden', !data);
   small.classList.toggle('hidden', !data);
   card.querySelector('.in-logo-remove').disabled = !data;
+}
+
+// Deletes a logo of the library for good and takes it off every input that used it. The first click arms the button (it
+// says what it will do, for four seconds), the second one deletes.
+async function deleteLogo(btn, card) {
+  const id = btn.dataset.del;
+  if (!btn.classList.contains('is-armed')) {
+    const users = [...settings.stations.filter((x) => x.logo === id).map((x) => x.name || t('station.unnamed')), ...settings.inputs.filter((i) => i.logo === id).map((i) => i.name || i.deviceLabel || hostOf(i.streamUrl))].filter(Boolean);
+    btn.classList.add('is-armed');
+    btn.textContent = t('set.logo.delSure', { n: users.length });
+    btn.title = users.join(', ');
+    setTimeout(() => { btn.classList.remove('is-armed'); btn.textContent = '×'; btn.title = t('set.logo.del'); }, 4000);
+    return;
+  }
+  const r = await api.logos.delete(id);
+  if (!r.ok) return;
+  for (const c of document.querySelectorAll('#inputsList .input, #stationsList .input')) {
+    if (c._logoId === id) { c._logoId = ''; refreshCardLogo(c); } // an unsaved form follows what was stored
+  }
+  logos = await api.logos.all();
+  toggleLogoPicker(card); // closes
+  toggleLogoPicker(card); // and opens again with what is left
+}
+
+// The logos already loaded, as small pictures to click. The title says which inputs use each one.
+function toggleLogoPicker(card) {
+  const box = card.querySelector('.logo-picker');
+  if (!box.classList.contains('hidden')) return box.classList.add('hidden');
+  box.replaceChildren(tel('p', 'hint', 'set.logo.pickTitle'));
+  const ids = Object.keys(logos);
+  if (!ids.length) box.append(tel('p', 'hint', 'set.logo.pickNone'));
+  const grid = el('div', 'logo-picker__grid');
+  for (const id of ids) {
+    const users = [...settings.stations.filter((x) => x.logo === id).map((x) => x.name || t('station.unnamed')), ...settings.inputs.filter((i) => i.logo === id).map((i) => i.name || i.deviceLabel || hostOf(i.streamUrl))].filter(Boolean);
+    const b = el('button', 'logo-pick');
+    b.type = 'button';
+    b.dataset.logo = id;
+    b.title = users.join(', ');
+    const img = el('img');
+    img.alt = users[0] || '';
+    img.src = logos[id];
+    markAlpha(img, logos[id]);
+    b.append(img);
+    if (id === card._logoId) b.classList.add('is-current');
+    const del = el('span', 'logo-pick__del');
+    del.dataset.del = id;
+    del.setAttribute('role', 'button');
+    del.title = t('set.logo.del');
+    del.textContent = '×';
+    b.append(del);
+    grid.append(b);
+  }
+  box.append(grid);
+  box.classList.remove('hidden');
 }
 
 // Shrinks a picture chosen by the user to at most 256 px and returns it as a PNG data URL.
@@ -1108,10 +1358,35 @@ function readSchedule(card) {
   };
 }
 
+// The logo of an input or of a station: the picture, "Choose image…", "Use a logo already loaded…" and "Remove logo".
+// card._logoId is the logo of the library it uses ('' = none); card._logo a new picture (a PNG data URL) stored on save.
+function buildLogoField() {
+  const logoImg = el('img');
+  logoImg.alt = '';
+  const logoBox = el('div', 'logo-box');
+  logoBox.appendChild(logoImg);
+  const choose = tel('button', 'btn btn--small in-logo-choose', 'set.logo.choose');
+  choose.type = 'button';
+  const dropLogo = tel('button', 'btn btn--small btn--ghost in-logo-remove', 'set.logo.remove');
+  dropLogo.type = 'button';
+  const file = el('input', 'in-logo-file hidden');
+  file.type = 'file';
+  file.accept = 'image/*';
+  const pick = tel('button', 'btn btn--small btn--ghost in-logo-pick', 'set.logo.pick');
+  pick.type = 'button';
+  const logoRow = el('div', 'logo-field');
+  logoRow.append(logoBox, choose, pick, dropLogo, file);
+  const logoField = el('div', 'field');
+  logoField.append(tel('span', '', 'set.logo.label'), logoRow, tel('p', 'hint', 'set.logo.hint'), tel('p', 'warn hidden in-logo-bad', 'set.logo.bad'));
+  logoField.append(el('div', 'logo-picker hidden')); // the logos already loaded: one click gives this card the same logo
+  return logoField;
+}
+
 function buildInputCard(inp, open) {
   const card = el('details', 'input');
   card.dataset.id = inp.id;
   card.dataset.type = inp.type;
+  card._logoId = inp.logo || ''; // the logo of the library this input uses ('' = none); a new picture is added on save (card._logo)
   card.open = open;
   const summary = el('summary');
   const title = el('span', 'input__title');
@@ -1125,10 +1400,13 @@ function buildInputCard(inp, open) {
     b.setAttribute('aria-label', t(key));
     move.appendChild(b);
   }
+  const grip = el('span', 'input__grip', '⠿'); // drag a stream onto a station, or out of it
+  grip.draggable = true;
+  grip.title = t('set.in.drag');
   const live = el('span', 'input__live');
   live.dataset.live = inp.id;
   live.title = t('set.live.tip');
-  summary.append(sumLogo, title, live, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'), move);
+  summary.append(grip, sumLogo, title, live, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'), move);
   const body = el('div', 'input__body');
 
   const enabled = el('input', 'in-enabled');
@@ -1143,25 +1421,25 @@ function buildInputCard(inp, open) {
   name.maxLength = 60;
   name.spellcheck = false;
 
-  body.append(enabledLabel, labelled('set.in.name', name));
+  const stSel = el('select', 'in-station');
+  stSel.append(new Option(t('set.in.stationNone'), ''));
+  for (const st of stationChoices()) stSel.append(new Option(st.name || t('station.unnamed'), st.id));
+  stSel.value = inp.stationId || '';
+  if (stSel.value !== (inp.stationId || '')) stSel.value = '';
+  name.placeholder = t('set.in.nameHint');
+  // what the input says when it fails: everything (as always), nothing outside the window (without alerts), or only AUDIO YES / NO
+  const alertsSel = el('select', 'in-alerts');
+  for (const [v, key] of [['on', 'set.in.alerts.on'], ['off', 'set.in.alerts.off'], ['indicator', 'set.in.alerts.indicator']]) alertsSel.append(new Option(t(key), v));
+  alertsSel.value = inp.alerts || 'on';
+  const countsBox = el('input', 'in-ind-counts');
+  countsBox.type = 'checkbox';
+  countsBox.checked = !!inp.indicatorCounts;
+  const countsLabel = el('label', 'check in-ind-counts-row');
+  countsLabel.append(countsBox, tel('span', '', 'set.in.alerts.counts'));
+  countsLabel.classList.toggle('hidden', alertsSel.value !== 'indicator');
+  body.append(enabledLabel, labelled('set.in.name', name), labelled('set.in.station', stSel), labelled('set.in.alerts', alertsSel), tel('p', 'hint', 'set.in.alerts.hint'), countsLabel);
 
-  // logo: _logo is undefined (unchanged), null (to be removed) or a PNG data URL (to be stored on save)
-  const logoImg = el('img');
-  logoImg.alt = '';
-  const logoBox = el('div', 'logo-box');
-  logoBox.appendChild(logoImg);
-  const choose = tel('button', 'btn btn--small in-logo-choose', 'set.logo.choose');
-  choose.type = 'button';
-  const dropLogo = tel('button', 'btn btn--small btn--ghost in-logo-remove', 'set.logo.remove');
-  dropLogo.type = 'button';
-  const file = el('input', 'in-logo-file hidden');
-  file.type = 'file';
-  file.accept = 'image/*';
-  const logoRow = el('div', 'logo-field');
-  logoRow.append(logoBox, choose, dropLogo, file);
-  const logoField = el('div', 'field');
-  logoField.append(tel('span', '', 'set.logo.label'), logoRow, tel('p', 'hint', 'set.logo.hint'), tel('p', 'warn hidden in-logo-bad', 'set.logo.bad'));
-  body.appendChild(logoField);
+  body.appendChild(buildLogoField());
 
   if (inp.type === 'stream') {
     const url = el('input', 'in-url');
@@ -1229,7 +1507,9 @@ function buildInputCard(inp, open) {
   const remove = tel('button', 'btn btn--small btn--danger in-remove', 'set.in.remove');
   remove.type = 'button';
   const foot = el('div', 'input__foot');
-  foot.appendChild(remove);
+  const unst = tel('button', 'btn btn--small btn--ghost in-unstation hidden', 'set.in.unstation');
+  unst.type = 'button';
+  foot.append(unst, remove);
   body.appendChild(foot);
   card.append(summary, body);
   title.textContent = inputTitle(card);
@@ -1251,35 +1531,185 @@ function syncUrlEye(card) {
 
 function updateInputsFooter() {
   markUsedDevices();
-  const cards = $('inputsList').querySelectorAll('.input');
+  const cards = flowCards();
   $('addStream').disabled = cards.length >= MAX_INPUTS;
   $('addDevice').disabled = cards.length >= MAX_INPUTS;
   $('inputsMax').textContent = t('set.inputs.max', { n: MAX_INPUTS });
   $('inputsEmpty').classList.toggle('hidden', cards.length > 0);
-  cards.forEach((c, i) => {
-    c.querySelector('.in-up').disabled = i === 0;
-    c.querySelector('.in-down').disabled = i === cards.length - 1;
-  });
+  for (const c of cards) { // up and down move a card inside its own list (a station or the free ones)
+    const mates = [...c.parentElement.children].filter((x) => x.classList.contains('input'));
+    c.querySelector('.in-up').disabled = mates[0] === c;
+    c.querySelector('.in-down').disabled = mates[mates.length - 1] === c;
+    c.querySelector('.in-unstation').classList.toggle('hidden', !ownerOf(c));
+  }
+  $('freeDrop').classList.toggle('hidden', !document.querySelector('#stationsList .station-card'));
+}
+
+
+// ---- stations (Settings → Inputs): a station has a name, a logo and a colour; its streams are inside its card ------------------
+// The cards of the streams and sound cards in the form: the ones inside a station first, then the free ones (the order they are saved in).
+function flowCards() {
+  return [...document.querySelectorAll('#stationsList .st-streams > .input, #inputsList > .input')];
+}
+// The station a stream card is in ('' = free).
+const ownerOf = (card) => card.parentElement?.closest('.station-card')?.dataset.id || '';
+
+// Puts a stream card into a station (or, with '', takes it out): the card really moves, so it is seen where it is.
+function moveCardTo(card, stationId) {
+  const station = stationId ? document.querySelector(`#stationsList .station-card[data-id="${CSS.escape(stationId)}"]`) : null;
+  const target = station ? station.querySelector('.st-streams') : $('inputsList');
+  if (!target || card.parentElement === target) return;
+  target.appendChild(card);
+  if (station) station.open = true;
+  updateInputsFooter();
+  refreshStationCards();
+  setDirty(true);
+}
+
+// The stations of the form, as they are now (also the ones not saved yet).
+function stationChoices() {
+  return [...document.querySelectorAll('#stationsList .station-card')].map((c) => ({ id: c.dataset.id, name: c.querySelector('.st-name').value.trim() }));
+}
+
+// The colour of a station: a row of swatches (the palette); the station and its streams are drawn with it.
+function buildColorField(current) {
+  const row = el('div', 'st-colors');
+  for (const c of PALETTE) {
+    const b = el('button', 'st-swatch');
+    b.type = 'button';
+    b.dataset.color = c;
+    b.style.background = c;
+    b.title = c;
+    b.setAttribute('aria-label', c);
+    b.classList.toggle('is-on', c === current);
+    row.appendChild(b);
+  }
+  return labelled('set.station.color', row);
+}
+
+function buildStationCard(st, open) {
+  const card = el('details', 'input station-card');
+  card.dataset.id = st.id;
+  card.open = open;
+  card._logoId = st.logo || '';
+  const summary = el('summary');
+  const count = el('span', 'input__kind st-count');
+  const sumLogo = el('img', 'input__logo hidden');
+  sumLogo.alt = '';
+  summary.append(sumLogo, el('span', 'input__title', st.name || t('station.unnamed')), tel('span', 'input__kind', 'station.kind'), count);
+  const body = el('div', 'input__body');
+  const name = el('input', 'st-name');
+  name.type = 'text';
+  name.value = st.name;
+  name.maxLength = 60;
+  name.spellcheck = false;
+  const featured = el('select', 'st-featured');
+  const members = tel('p', 'hint st-members', 'set.station.noMembers');
+  const streams = el('div', 'st-streams'); // the streams of this station: their own cards, here
+  const color = buildColorField(st.color);
+  const add = tel('button', 'btn btn--small st-add', 'set.station.addStream');
+  add.type = 'button';
+  const del = tel('button', 'btn btn--small btn--ghost st-del', 'set.station.delete');
+  del.type = 'button';
+  const attach = el('select', 'st-attach'); // a stream that is already set up, moved into this station
+  const row = el('div', 'row');
+  row.append(add, del);
+  body.append(labelled('set.station.name', name), buildLogoField(), color, labelled('set.station.featured', featured), tel('p', 'hint', 'set.station.featuredHint'), members, streams, labelled('set.station.attach', attach), row);
+  card._featured = st.featured || '';
+  card._color = st.color || '';
+  card.append(summary, body);
+  refreshCardLogo(card);
+  return card;
+}
+
+function renderStationsList() {
+  const list = $('stationsList');
+  list.replaceChildren();
+  (settings.stations || []).forEach((st) => list.appendChild(buildStationCard(st, false)));
+  $('stationsEmpty').classList.toggle('hidden', (settings.stations || []).length > 0);
+}
+
+function addStation() {
+  const used = new Set([...document.querySelectorAll('#stationsList .station-card')].map((c) => c._color));
+  const card = buildStationCard({ id: uuid(), name: '', logo: '', featured: '', color: PALETTE.find((c) => !used.has(c)) || PALETTE[used.size % PALETTE.length] }, true);
+  $('stationsList').appendChild(card);
+  $('stationsEmpty').classList.add('hidden');
+  refreshStationCards();
+  refreshCardLogo(card);
+  setDirty(true);
+  card.querySelector('.st-name').focus();
+}
+
+function readStations() {
+  return [...document.querySelectorAll('#stationsList .station-card')].map((card) => ({
+    id: card.dataset.id,
+    name: card.querySelector('.st-name').value.trim(),
+    logo: card._logoId || '',
+    featured: card.querySelector('.st-featured').value,
+    color: card._color || ''
+  }));
+}
+
+// The names, the choices and the streams that depend on one another follow what is in the form now: a station renamed,
+// a stream that chooses another station, a stream added or removed.
+function refreshStationCards() {
+  const choices = stationChoices();
+  const inputCards = flowCards();
+  for (const c of inputCards) { // the menu "Station" of each stream says where the card is
+    const sel = c.querySelector('.in-station');
+    sel.replaceChildren(new Option(t('set.in.stationNone'), ''));
+    for (const st of choices) sel.append(new Option(st.name || t('station.unnamed'), st.id));
+    sel.value = ownerOf(c);
+  }
+  for (const card of document.querySelectorAll('#stationsList .station-card')) {
+    const mine = inputCards.filter((c) => ownerOf(c) === card.dataset.id);
+    const feat = card.querySelector('.st-featured');
+    const want = feat.value || card._featured || '';
+    feat.replaceChildren(new Option(t('set.station.featuredFirst'), ''));
+    for (const c of mine) feat.append(new Option(inputTitle(c), c.dataset.id));
+    feat.value = mine.some((c) => c.dataset.id === want) ? want : '';
+    // the streams already set up that are not in this station (the ones of another station say which)
+    const att = card.querySelector('.st-attach');
+    att.replaceChildren(new Option(t('set.station.attachPick'), ''));
+    for (const c of inputCards) {
+      const cur = ownerOf(c);
+      if (cur === card.dataset.id) continue;
+      const other = cur && choices.find((x) => x.id === cur);
+      att.append(new Option(other ? `${inputTitle(c)} (${other.name || t('station.unnamed')})` : inputTitle(c), c.dataset.id));
+    }
+    card.querySelector('.st-members').classList.toggle('hidden', mine.length > 0); // "no stream yet": the streams themselves are in the card
+    card.querySelector('.st-count').textContent = String(mine.length);
+    card.querySelector('.input__title').textContent = card.querySelector('.st-name').value.trim() || t('station.unnamed');
+  }
 }
 
 function renderInputsList() {
   const list = $('inputsList');
   list.replaceChildren();
-  settings.inputs.forEach((inp) => list.appendChild(buildInputCard(inp, settings.inputs.length <= 2)));
+  for (const box of document.querySelectorAll('#stationsList .st-streams')) box.replaceChildren();
+  for (const inp of settings.inputs) {
+    const card = buildInputCard(inp, settings.inputs.length <= 2);
+    const home = inp.stationId ? document.querySelector(`#stationsList .station-card[data-id="${CSS.escape(inp.stationId)}"] .st-streams`) : null;
+    (home || list).appendChild(card);
+  }
+  refreshStationCards();
   updateInputsFooter();
 }
 
-function addInput(type) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', channelPair: 0, channelMono: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
-  const card = buildInputCard(base, true);
-  $('inputsList').appendChild(card);
+function addInput(type, extra = {}) {
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', logo: '', channelPair: 0, channelMono: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
+  const card = buildInputCard({ ...base, ...extra }, true);
+  const home = extra.stationId ? document.querySelector(`#stationsList .station-card[data-id="${CSS.escape(extra.stationId)}"] .st-streams`) : null;
+  (home || $('inputsList')).appendChild(card);
+  if (home) home.closest('.station-card').open = true;
   updateInputsFooter();
+  refreshStationCards();
   setDirty(true);
   card.querySelector(type === 'stream' ? '.in-url' : '.in-name').focus();
 }
 
 function readInputs() {
-  return [...$('inputsList').querySelectorAll('.input')].map((card) => {
+  return flowCards().map((card) => {
     const type = card.dataset.type;
     const sel = card.querySelector('.in-device');
     const deviceId = sel ? sel.value : '';
@@ -1291,6 +1721,10 @@ function readInputs() {
       streamUrl: type === 'stream' ? card.querySelector('.in-url').value.trim() : '',
       deviceId,
       deviceLabel: deviceId ? optionName(sel.selectedOptions[0]) : '',
+      logo: card._logoId || '',
+      stationId: ownerOf(card),
+      alerts: card.querySelector('.in-alerts').value,
+      indicatorCounts: card.querySelector('.in-alerts').value === 'indicator' && card.querySelector('.in-ind-counts').checked,
       channelPair: type === 'device' ? (chanValue(card).startsWith('c') ? 0 : Number(chanValue(card)) || 0) : 0,
       channelMono: type === 'device' && chanValue(card).startsWith('c') ? Number(chanValue(card).slice(1)) || 0 : 0,
       thresholdDb: Number(card.querySelector('.in-thr').value),
@@ -1312,9 +1746,10 @@ function onInputsEvent(e) {
     if (chan) { for (const o of chan.options) { o.hidden = false; o.disabled = false; } chan.value = '0'; }
     if (card) fitChannelChoices(card);
   }
-  if (e.target.closest('#inputsList')) setTimeout(markUsedDevices, 0); // a device, a pair or a name changed: refresh the "already used" marks
+  if (e.target.closest('#inputsList, #stationsList')) setTimeout(markUsedDevices, 0); // a device, a pair or a name changed: refresh the "already used" marks
   const card = e.target.closest?.('.input');
   if (!card) return;
+  if (card.classList.contains('station-card')) return stationEvent(e, card);
   const tg = e.target;
   if (tg.classList.contains('in-url') && tg.classList.contains('is-invalid') && validUrl(tg.value.trim())) {
     markInvalid(tg, false);
@@ -1327,32 +1762,145 @@ function onInputsEvent(e) {
   if (tg.classList.contains('in-thr-range')) card.querySelector('.in-thr').value = tg.value;
   if (tg.classList.contains('in-thr')) card.querySelector('.in-thr-range').value = clamp(Number(tg.value) || -50, -90, -10);
   card.querySelector('.input__title').textContent = inputTitle(card);
-  if (tg.classList.contains('in-logo-file') && tg.files[0]) {
-    const bad = card.querySelector('.in-logo-bad');
-    logoFromFile(tg.files[0]).then(
-      (data) => {
-        card._logo = data;
-        bad.classList.add('hidden');
-        refreshCardLogo(card);
-        setDirty(true);
-      },
-      () => bad.classList.remove('hidden')
-    );
-    tg.value = '';
+  logoFileEvent(tg, card);
+  if (tg.classList.contains('in-alerts')) card.querySelector('.in-ind-counts-row').classList.toggle('hidden', tg.value !== 'indicator');
+  if (tg.classList.contains('in-station')) moveCardTo(card, tg.value); // the card goes into the station
+  else if (['in-name', 'in-url', 'in-device'].some((c) => tg.classList.contains(c))) refreshStationCards(); // the station cards list their streams
+}
+
+// A picture chosen with "Choose image…" (an input or a station): shrunk, shown, stored on save.
+function logoFileEvent(tg, card) {
+  if (!tg.classList.contains('in-logo-file') || !tg.files[0]) return;
+  const bad = card.querySelector('.in-logo-bad');
+  logoFromFile(tg.files[0]).then(
+    (data) => {
+      card._logo = data;
+      bad.classList.add('hidden');
+      refreshCardLogo(card);
+      setDirty(true);
+    },
+    () => bad.classList.remove('hidden')
+  );
+  tg.value = '';
+}
+
+// The buttons of the logo field (an input or a station). True if the click was one of them.
+function logoClick(tg, card) {
+  if (tg.classList.contains('in-logo-choose')) {
+    card.querySelector('.in-logo-file').click();
+  } else if (tg.classList.contains('in-logo-remove')) {
+    card._logo = undefined;
+    card._logoId = '';
+    refreshCardLogo(card);
+    card.querySelector('.logo-picker').classList.add('hidden');
+    setDirty(true);
+  } else if (tg.classList.contains('in-logo-pick')) {
+    toggleLogoPicker(card);
+  } else if (tg.classList.contains('logo-pick__del')) {
+    deleteLogo(tg, card);
+  } else if (tg.closest('.logo-pick')) {
+    card._logo = undefined;
+    card._logoId = tg.closest('.logo-pick').dataset.logo;
+    refreshCardLogo(card);
+    card.querySelector('.logo-picker').classList.add('hidden');
+    setDirty(true);
+  } else {
+    return false;
   }
+  return true;
+}
+
+// Events in a station card: a name typed (the other cards list the station by it), the stream it shows, a picture chosen.
+function stationEvent(e, card) {
+  const tg = e.target;
+  if (tg.classList.contains('st-featured')) card._featured = tg.value;
+  if (tg.classList.contains('st-name')) refreshStationCards();
+  if (tg.classList.contains('st-attach') && tg.value) { // an existing stream goes into this station
+    const moving = flowCards().find((c) => c.dataset.id === tg.value);
+    if (moving) moveCardTo(moving, card.dataset.id);
+    return;
+  }
+  logoFileEvent(tg, card);
+}
+
+// Drag a stream by its grip onto a station (it goes into it) or onto the free streams (it comes out). The same can be done with the
+// menu "Station" of the stream and the buttons, for who does not drag.
+function wireDragAndDrop() {
+  let dragCard = null;
+  const zoneOf = (target) => {
+    const st = target.closest?.('.station-card');
+    if (st) return { el: st, id: st.dataset.id };
+    const free = target.closest?.('#freeZone');
+    return free ? { el: free, id: '' } : null;
+  };
+  const clear = () => document.querySelectorAll('.is-drop').forEach((x) => x.classList.remove('is-drop'));
+  const root = $('inputsCard');
+  root.addEventListener('dragstart', (e) => {
+    const grip = e.target.closest?.('.input__grip');
+    if (!grip) return;
+    dragCard = grip.closest('.input');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', dragCard.dataset.id);
+    dragCard.classList.add('is-dragging');
+    root.classList.add('is-dragging-card');
+  });
+  root.addEventListener('dragend', () => {
+    dragCard?.classList.remove('is-dragging');
+    root.classList.remove('is-dragging-card');
+    dragCard = null;
+    clear();
+  });
+  root.addEventListener('dragover', (e) => {
+    if (!dragCard) return;
+    const z = zoneOf(e.target);
+    clear();
+    if (!z) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    z.el.classList.add('is-drop');
+  });
+  root.addEventListener('drop', (e) => {
+    if (!dragCard) return;
+    const z = zoneOf(e.target);
+    e.preventDefault();
+    const card = dragCard;
+    clear();
+    if (z) moveCardTo(card, z.id);
+  });
 }
 
 function onInputsClick(e) {
   const card = e.target.closest?.('.input');
   if (!card) return;
   const tg = e.target;
+  if (tg.closest?.('.input__grip')) { e.preventDefault(); return; } // the grip only drags: a click must not open or close the card
+  if (card.classList.contains('station-card')) { // a station: its logo, a stream to add, delete
+    if (logoClick(tg, card)) return;
+    if (tg.closest('.st-swatch')) {
+      card._color = tg.closest('.st-swatch').dataset.color;
+      for (const b of card.querySelectorAll('.st-swatch')) b.classList.toggle('is-on', b.dataset.color === card._color);
+      setDirty(true);
+    } else if (tg.closest('.st-add')) {
+      addInput('stream', { stationId: card.dataset.id });
+    } else if (tg.closest('.st-del')) {
+      const free = $('inputsList');
+      for (const c of [...card.querySelectorAll('.st-streams > .input')]) free.appendChild(c); // its streams stay, free
+      card.remove();
+      updateInputsFooter();
+      $('stationsEmpty').classList.toggle('hidden', !!document.querySelector('#stationsList .station-card'));
+      refreshStationCards(); // its streams are free again
+      setDirty(true);
+    }
+    return;
+  }
   const mv = tg.closest?.('.in-up, .in-down');
   if (mv) {
     e.preventDefault(); // a click inside the summary would open or close the card
-    const list = $('inputsList');
-    const ids = [...list.children].map((c) => c.dataset.id);
+    const list = card.parentElement; // a station or the free ones
+    const cardsHere = [...list.children].filter((c) => c.classList.contains('input'));
+    const ids = cardsHere.map((c) => c.dataset.id);
     const next = moveItem(ids, ids.indexOf(card.dataset.id), mv.classList.contains('in-up') ? -1 : 1);
-    const byId = new Map([...list.children].map((c) => [c.dataset.id, c]));
+    const byId = new Map(cardsHere.map((c) => [c.dataset.id, c]));
     next.forEach((id) => list.appendChild(byId.get(id)));
     updateInputsFooter();
     setDirty(true);
@@ -1366,6 +1914,8 @@ function onInputsClick(e) {
   } else if (tg.classList.contains('rule-remove')) {
     tg.closest('.rule').remove();
     setDirty(true);
+  } else if (tg.classList.contains('in-unstation')) {
+    moveCardTo(card, '');
   } else if (tg.classList.contains('in-remove')) {
     card.remove();
     updateInputsFooter();
@@ -1373,12 +1923,8 @@ function onInputsClick(e) {
   } else if (tg.classList.contains('chip')) {
     card.querySelector('.in-min').value = tg.dataset.sec;
     setDirty(true);
-  } else if (tg.classList.contains('in-logo-choose')) {
-    card.querySelector('.in-logo-file').click();
-  } else if (tg.classList.contains('in-logo-remove')) {
-    card._logo = null;
-    refreshCardLogo(card);
-    setDirty(true);
+  } else if (logoClick(tg, card)) {
+    return;
   } else if (tg.classList.contains('in-refresh')) {
     loadDevices();
   }
@@ -1427,7 +1973,9 @@ function addRecipientRow(r = { chatId: '', note: '' }) {
 function fillForm() {
   if (!settings) return;
   const s = settings;
+  renderStationsList();
   renderInputsList();
+  refreshStationCards();
   $('nDesktop').checked = s.notifications.desktop;
   $('nReminder').value = s.notifications.reminderMin;
   $('nSound').checked = s.notifications.sound.enabled;
@@ -1515,6 +2063,7 @@ function readForm() {
     return { chatId: chat.value.trim(), note: note.value.trim() };
   });
   return {
+    stations: readStations(),
     inputs: readInputs(),
     notifications: {
       desktop: $('nDesktop').checked,
@@ -1556,7 +2105,7 @@ async function saveForm(e) {
   normaliseRecipients();
   const patch = readForm();
   let bad = false;
-  for (const card of $('inputsList').querySelectorAll('.input')) {
+  for (const card of flowCards()) {
     const inp = patch.inputs.find((i) => i.id === card.dataset.id);
     const invalid = inp.type === 'stream' && inp.enabled && !validUrl(inp.streamUrl);
     card.querySelector('.in-bad')?.classList.toggle('hidden', !invalid);
@@ -1577,7 +2126,7 @@ async function saveForm(e) {
     const st = $('saveState');
     st.textContent = t('set.notSaved');
     st.classList.add('is-dirty');
-    const first = bad ? $('inputsList').querySelector('.in-url.is-invalid') : hbBad ? $('hUrl') : $('wUrl');
+    const first = bad ? document.querySelector('#inputsCard .in-url.is-invalid') : hbBad ? $('hUrl') : $('wUrl');
     first?.scrollIntoView({ block: 'center' });
     first?.focus({ preventScroll: true });
     return;
@@ -1586,14 +2135,19 @@ async function saveForm(e) {
     if (!(await askMic())) return;
     patch.micExplained = true;
   }
-  for (const card of $('inputsList').querySelectorAll('.input')) {
-    if (card._logo === undefined) continue;
-    const r = card._logo ? await api.logos.set(card.dataset.id, card._logo) : await api.logos.remove(card.dataset.id);
+  // a new picture goes into the library (the same picture again gives the logo that is already there); the input then points to it
+  for (const card of document.querySelectorAll('#stationsList .input, #inputsList .input')) {
+    if (!card._logo) continue;
+    const r = await api.logos.add(card._logo);
     if (!r.ok) {
       card.open = true;
       card.querySelector('.in-logo-bad').classList.remove('hidden');
       return;
     }
+    card._logoId = r.id;
+    card._logo = undefined;
+    const target = (card.classList.contains('station-card') ? patch.stations : patch.inputs).find((x) => x.id === card.dataset.id);
+    if (target) target.logo = r.id;
   }
   logos = await api.logos.all();
   settings = await api.settings.update(patch);
@@ -1618,12 +2172,12 @@ async function loadDevices() {
     devices = [];
     devicesDenied = true;
   }
-  for (const sel of $('inputsList').querySelectorAll('.in-device')) {
+  for (const sel of document.querySelectorAll('#inputsCard .in-device')) {
     const label = optionName(sel.selectedOptions[0]);
     fillDeviceSelect(sel, sel.value, label);
   }
   channelCounts.clear();
-  for (const card of $('inputsList').querySelectorAll('.input[data-type="device"]')) fitChannelChoices(card);
+  for (const card of flowCards().filter((c) => c.dataset.type === 'device')) fitChannelChoices(card);
   $('devDenied').classList.toggle('hidden', !devicesDenied);
   renderStatus();
 }
@@ -1718,8 +2272,10 @@ function askImportMode() {
 async function exportBackup() {
   renderMissing([]);
   if (dirty) return showBackupResult(t('bk.saveFirst'), false);
-  const r = await api.backup.export($('bkSecrets').checked);
+  const r = await api.backup.export($('bkSecrets').checked, $('bkLogos').checked);
   if (r.canceled) return showBackupResult('', true);
+  const mb = (n) => (n / 1_000_000).toFixed(1);
+  if (r.error === 'too-big-logos') return showBackupResult(t('bk.err.too-big-logos', { size: mb(r.size), limit: mb(r.limit) }), false);
   showBackupResult(r.ok ? t('bk.exported', { file: r.file }) : t('bk.failed', { error: r.error }), r.ok);
 }
 
@@ -1912,9 +2468,32 @@ function inline(text) {
   return out;
 }
 
+// The window after an update from a version with the browser engine: what the new audio engine and the stations are, once.
+function fillIntro(box) {
+  box.replaceChildren();
+  const h = (key) => box.appendChild(tel('h3', '', key));
+  const p = (key) => box.appendChild(tel('p', '', key));
+  const ul = (keys) => {
+    const u = el('ul');
+    for (const k of keys) u.appendChild(tel('li', '', k));
+    box.appendChild(u);
+  };
+  box.appendChild(tel('p', '', 'whatsnew.intro.lead'));
+  h('whatsnew.engine.h');
+  p('whatsnew.engine.p');
+  ul(['whatsnew.engine.b1', 'whatsnew.engine.b2', 'whatsnew.engine.b3', 'whatsnew.engine.b5', 'whatsnew.engine.b6', 'whatsnew.engine.b4']);
+  h('whatsnew.st.h');
+  p('whatsnew.st.p');
+  h('whatsnew.al.h');
+  p('whatsnew.al.p');
+  box.classList.remove('hidden');
+}
+
 async function showWhatsNew() {
   const nw = await api.updates.whatsNew();
   if (!nw) return;
+  if (nw.intro) fillIntro($('newDlgIntro'));
+  else $('newDlgIntro').classList.add('hidden');
   $('newDlgTitle').textContent = t('whatsnew.title', { v: nw.version });
   const list = $('newDlgList');
   list.replaceChildren();
@@ -1971,8 +2550,26 @@ function showView(name) {
   document.querySelector('.main').scrollTo(0, 0);
 }
 
+// The switch "By station / By input": in the dashboard, the compact view and the wall display. It is there only when there
+// is a station; what it chooses is saved (Settings → display.view) and counts everywhere.
+function renderViewButtons() {
+  const has = (settings.stations || []).length > 0;
+  const byStation = settings.display.view === 'stations';
+  for (const b of document.querySelectorAll('.js-view')) {
+    b.classList.toggle('hidden', !has);
+    b.textContent = t(byStation ? 'view.byInput' : 'view.byStation');
+    b.setAttribute('aria-pressed', String(byStation));
+  }
+}
+async function toggleView() {
+  settings = await api.settings.update({ display: { view: settings.display.view === 'stations' ? 'inputs' : 'stations' } });
+  renderViewButtons();
+  renderTiles();
+}
+
 function renderAll() {
   applyI18n();
+  renderViewButtons();
   buildLangSelect();
   $('themeSel').value = settings.theme;
   chartInput = fillInputSelect($('chartInput'), chartInput);
@@ -2022,6 +2619,7 @@ function wire() {
   for (const b of document.querySelectorAll('.nav__item')) b.addEventListener('click', () => showView(b.dataset.view));
   $('startBtn').addEventListener('click', onStartClick);
   $('wallBtn').addEventListener('click', () => setWall(true));
+  for (const b of document.querySelectorAll('.js-view')) b.addEventListener('click', toggleView);
   for (const b of document.querySelectorAll('.js-compact')) {
     b.addEventListener('click', async () => {
       settings = await api.window.setView('compact', !settings.window.compact);
@@ -2130,7 +2728,10 @@ function wire() {
       $('hBad').classList.add('hidden');
     }
   });
+  wireDragAndDrop();
   $('inputsList').addEventListener('click', onInputsClick);
+  $('stationsList').addEventListener('click', onInputsClick);
+  $('addStation').addEventListener('click', addStation);
   $('addStream').addEventListener('click', () => addInput('stream'));
   $('addDevice').addEventListener('click', () => {
     addInput('device');
@@ -2199,15 +2800,26 @@ function wire() {
     refreshEvents();
     refreshStats();
   });
-  api.on.settingsChanged((s) => {
+  api.on.settingsChanged(async (s) => {
     settings = s;
+    logos = await api.logos.all(); // an import brings logos with it
     applyDisplay(); // the compact view or always on top changed from the tray menu
     renderKpis();
-    renderTiles(); // micro-silences switched on or off
+    renderViewButtons();
+    renderTiles(); // micro-silences switched on or off, a station added or its view changed
     chartInput = fillInputSelect($('chartInput'), chartInput);
     logInput = fillInputSelect($('logInput'), logInput);
     if (!dirty) fillForm();
   });
+  const showEngineProblem = (p) => {
+    const b = $('engineBanner');
+    b.classList.toggle('hidden', !p);
+    if (!p) return;
+    $('engineBannerTitle').textContent = t(`engine.problem.${p.kind}.title`);
+    $('engineBannerText').textContent = t(`engine.problem.${p.kind}.text`, { detail: p.detail || '' });
+  };
+  api.engine.problem().then(showEngineProblem).catch(() => {});
+  api.on.engineProblem(showEngineProblem);
   api.on.updateAvailable((view) => {
     upd.view = view;
     renderUpdateUi();
@@ -2237,6 +2849,7 @@ function wire() {
 }
 
 async function init() {
+  watchWallArea();
   [settings, info, status, logos, upd.view] = await Promise.all([api.settings.get(), api.app.info(), api.monitor.status(), api.logos.all(), api.updates.state()]);
   lang = settings.language;
   t = makeT(lang);

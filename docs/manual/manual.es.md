@@ -10,7 +10,7 @@ La app es gratuita y no tiene certificado de Apple ni de Microsoft, así que en 
 
 - **Windows**: ejecuta el instalador. Si SmartScreen dice «Windows protegió su PC», pulsa *Más información* → *Ejecutar de todos modos*.
 - **macOS**: abre la imagen de disco y arrastra la app a Aplicaciones. La app tiene una firma ad-hoc, que es lo que necesita un Mac Apple silicon para abrirla. El primer inicio muestra igualmente el aviso «desarrollador no identificado»: abre *Ajustes del Sistema → Privacidad y seguridad*, desplázate hacia abajo y pulsa *Abrir de todos modos* (el clic derecho → Abrir ya no existe desde macOS 15). Si una versión anterior dice que la app está «dañada», ejecuta una vez en Terminal: `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`
-- **Linux**: haz ejecutable el AppImage (`chmod +x Dead-Air-Watchdog-*.AppImage`) y ejecútalo.
+- **Linux**: la app necesita la biblioteca de sonido del sistema **libasound2** (el motor de audio está enlazado a ella, aunque solo monitorices streams) y, para abrir un AppImage, FUSE. Instálalas antes: Debian, Ubuntu y derivadas `sudo apt install libasound2 libfuse2` (Ubuntu 24.04 y Debian 13: `sudo apt install libasound2t64 libfuse2t64`); Fedora `sudo dnf install alsa-lib fuse-libs`; Arch `sudo pacman -S alsa-lib fuse2`. Luego haz ejecutable el AppImage (`chmod +x Dead-Air-Watchdog-*.AppImage`) y ejecútalo. Si falta libasound2 la app se abre igualmente y un banner rojo lo dice, con estos comandos.
 
 La app se abre siempre en inglés; elige Italiano o Español en los ajustes y la elección se recuerda. El tema es oscuro por defecto, con claro y de sistema disponibles.
 
@@ -18,7 +18,7 @@ La app se abre siempre en inglés; elige Italiano o Español en los ajustes y la
 
 ## Cómo funciona
 
-Cada 100 ms el motor de audio (una ventana oculta, así sigue funcionando cuando la ventana principal está cerrada) calcula el nivel de cada canal, en **dBFS**. El canal más fuerte se compara con el umbral; **silencio significa que todos los canales están por debajo**.
+Cada 100 ms el motor de audio (un programa aparte, así sigue funcionando cuando la ventana principal está cerrada) mide el nivel de cada canal, en **dBFS**. El canal más fuerte se compara con el umbral; **silencio significa que todos los canales están por debajo**.
 
 - Por debajo del umbral la entrada está *contando* (amarillo). Cuando dura al menos el tiempo configurado, pasa a *alarma* (rojo) y salen los avisos. El silencio se fecha desde su primer momento de calma.
 - El audio ha *vuelto* solo después de quedarse igual o por encima del umbral durante 2 segundos seguidos, o 2 segundos en total dentro de 5 segundos: un solo clic en un tramo de silencio no reinicia la cuenta, y el habla con pausas entre las palabras cuenta como audio.
@@ -37,9 +37,23 @@ En *Ajustes → Entradas* añades hasta 32 entradas, en cualquier combinación:
 - **Más opciones** de cada entrada: *Amarillo tras…* (2 segundos por defecto: el semáforo se queda en verde hasta que el audio ha estado por debajo del umbral ese tiempo), el **horario de monitorización** (días y horas, también pasada la medianoche, en que la entrada no se monitoriza o tiene su propio umbral y tiempo) y la **alarma de audio congelado** (apagada por defecto: el nivel se mantiene dentro de un pequeño margen, 1 dB por defecto, durante al menos 10 segundos aunque esté por encima del umbral: un tono fijo, un bucle atascado o ruido constante).
 - **Now playing (título de la canción)**: en *Más opciones* de un **stream**, *Mostrar el título de la canción (now playing) en el panel* (desactivado por defecto). Muchos servidores Icecast y Shoutcast anuncian el título de la canción dentro del stream; con esto activado, la app se lo pide al servidor con una breve petición adicional cada 20 segundos (unos pocos kilobytes, el audio leído para ello se descarta) y lo muestra bajo el estado de la entrada en el panel, en la vista compacta (mientras la entrada está OK) y en el Wall display. Solo funciona durante la monitorización y con la ventana visible. Nunca cambia lo que se mide ni cuándo salta una alarma, no forma parte de los avisos, y un servidor que no envía títulos no muestra nada.
 
+## Emisoras
+
+Una radio suele tener varios streams: Giornale Radio puede tener ocho, GRNews dos. Una **emisora** los agrupa: un nombre, un logotipo y los streams debajo.
+
+- *Ajustes → Entradas → Emisoras → Crear emisora*: ponle un **nombre** y un **logotipo** (elige una imagen o *Usar un logotipo ya cargado…*) y elige el **stream que se muestra con la emisora cerrada**: el título de la canción (now playing) y el nivel de la emisora cerrada son los suyos.
+- Los streams de una emisora están **dentro de su tarjeta**, y un stream que está en una emisora ya no aparece entre los libres. Para poner un stream en una emisora: **arrástralo por su asa ⠿** sobre la emisora (para sacarlo, arrástralo a la lista de los streams libres), o elige la emisora en el menú *Emisora* del stream, o usa *Añadir un stream ya configurado* en la tarjeta de la emisora, o *Añadir un stream a esta emisora* para uno nuevo; *Sacar de la emisora* hace lo contrario. Un stream conserva **su propio nombre y logotipo**, que sustituyen a los de la emisora. En una emisora pon nombres cortos a los streams (*Nazionale*): bajo su emisora se ven con ese nombre, y donde los streams se muestran solos (la vista *Por entrada*, los avisos, el registro) la emisora va delante (*Giornale Radio · Nazionale*; no se repite si el nombre ya la contiene). Un stream sin nombre propio se llama como su emisora y su dirección.
+- Cada emisora tiene un **color** (lo da la app, se puede cambiar en la tarjeta de la emisora); la emisora y sus streams lo comparten en todas las vistas, como una franja lateral y el color del nombre, para indicar que son un grupo.
+- El botón **Por emisora / Por entrada** (arriba en la ventana, en la vista compacta y en el Wall display) elige lo que se ve, en todas partes. Por emisora, cada emisora es un recuadro: logotipo, nombre, el estado de su peor stream, y el título de la canción y el nivel del stream que muestra. Una emisora cerrada muestra **un punto por cada stream** (verde, amarillo, rojo, azul si está en pausa; el nombre del stream es su indicación). Una **nota amarilla** aparece en la emisora cerrada en cuanto uno de sus streams cuenta un silencio, antes de cualquier alarma.
+- Un clic en la emisora **abre sus streams**, cada uno con su nombre, logotipo y estado; otro clic los cierra. Una emisora en la que un stream está en dead air **se abre sola** y no se puede cerrar hasta que vuelve el audio. Si caen muchas emisoras a la vez, las cuatro primeras se abren solas y las demás quedan cerradas en rojo, con la línea *+N emisoras más en dead air*: un clic las abre. El Wall display funciona igual, con el diseño de siempre (reloj y estado arriba, recuadros grandes): la emisora se queda como primer recuadro, con la flecha para cerrarla, seguida de sus streams; un clic en el recuadro la abre y la cierra. La flecha es grande y de color para que se vea.
+- Los avisos no cambian: uno por stream, ahora con **la emisora y el stream** (*Giornale Radio · Rete 1*; la emisora no se repite si el nombre ya la contiene). Los streams que no están en ninguna emisora siguen siendo recuadros propios.
+- La copia de seguridad guarda las emisoras con sus logotipos, y *Incluir los logotipos* se puede desactivar.
+
 ## Panel y modo pared
 
 El **Panel** muestra un gran semáforo con el peor estado de todas las entradas (verde: todo OK; amarillo: hay una cuenta en curso; rojo: dead air; gris: parado) y una tarjeta por entrada con su estado, su cuenta y un medidor de nivel en directo con el umbral marcado.
+
+Los **avisos de una entrada** (*Ajustes → Entradas → la entrada → Avisos*) tienen tres modos. *Activos* es el habitual. *Apagados* mantiene la entrada medida, visible y en el registro, pero no envía mensajes ni sonido y la deja fuera del estado general (el gran TUTTO OK y el color del Wall display): para una entrada que solo se mira. *Indicador* muestra solo **AUDIO SÍ / AUDIO NO** en la tarjeta (el nivel frente al umbral; una caída más corta que el retardo amarillo no es un NO), sin cuenta atrás, alarma ni registro; si marcas *El AUDIO NO cuenta en el estado general* pasa a ser un amarillo del estado general, nunca una alarma ni un mensaje. La tarjeta dice *avisos apagados* o *indicador*. No es la pausa: la pausa termina sola y muestra EN PAUSA, esto se queda hasta que lo cambies.
 
 En cada tarjeta, **Pausar los avisos de esta entrada** apaga los avisos de esa entrada durante 1 hora o hasta mañana a las 06:00 (por mantenimiento). La pausa termina sola, sobrevive a un reinicio y se escribe en el registro; la entrada se sigue midiendo y se muestra como EN PAUSA.
 
@@ -108,6 +122,7 @@ Como los equipos que ejecutan esta app suelen quedarse solos, una versión nueva
 | macOS: «la app está dañada / no se puede abrir» | Abre *Ajustes del Sistema → Privacidad y seguridad → Abrir de todos modos*; para una versión anterior, ejecuta en Terminal `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`. |
 | Windows: «Windows protegió su PC» | *Más información* → *Ejecutar de todos modos*. |
 | Linux: el AppImage no se inicia | Hazlo ejecutable (`chmod +x`) e instala FUSE (`libfuse2`) si tu sistema lo necesita. |
+| Linux: banner rojo "el motor de audio no arranca" | Falta la biblioteca `libasound2`: instálala (ver *Instalación*), luego cierra y abre la app. |
 | La tarjeta de sonido dice «no encontrado» | El dispositivo guardado ya no está: vuelve a conectarlo, pulsa *Actualizar la lista* y elígelo de nuevo. |
 | Una entrada muestra «offline» | Falta el dispositivo o el stream está caído; la app se reconecta sola. |
 | No llega ningún aviso | Usa *Enviar prueba* en *Ajustes → Avisos* y lee el mensaje de error. |

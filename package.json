@@ -1,8 +1,8 @@
 {
   "name": "dead-air-watchdog",
   "productName": "Dead Air Watchdog",
-  "version": "26.11.3",
-  "description": "Monitors an audio input or an Icecast/Shoutcast stream and alerts by email and Telegram when it stays silent",
+  "version": "26.11.4",
+  "description": "Monitors sound cards and Icecast/Shoutcast streams with a native audio engine and alerts by email and Telegram when they stay silent",
   "main": "main.js",
   "type": "module",
   "author": "Graziano Melzi <hello@onairgarage.com> (https://onairgarage.com)",
@@ -18,14 +18,15 @@
     "dist": "electron-builder",
     "dist:win": "electron-builder --win",
     "dist:mac": "electron-builder --mac",
-    "dist:linux": "electron-builder --linux"
+    "dist:linux": "electron-builder --linux",
+    "engine": "cargo build --release --manifest-path engine/Cargo.toml"
   },
   "dependencies": {
-    "nodemailer": "^10.1.4"
+    "nodemailer": "^10.6.0"
   },
   "devDependencies": {
-    "electron": "^44.9.1",
-    "electron-builder": "^26.15.3"
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "com.onairgarage.deadairwatchdog",
@@ -34,7 +35,7 @@
     "files": [
       "main.js",
       "preload.cjs",
-      "engine-preload.cjs",
+      "sound-preload.cjs",
       "src/**/*",
       "renderer/**/*",
       "assets/**/*",
@@ -76,6 +77,12 @@
       "createStartMenuShortcut": true,
       "runAfterFinish": true,
       "shortcutName": "Dead Air Watchdog"
-    }
+    },
+    "extraResources": [
+      {
+        "from": "engine/dist/${os}-${arch}",
+        "to": "engine"
+      }
+    ]
   }
 }

@@ -8,17 +8,19 @@ import { createStore, COMPACT_MIN, NORMAL_MIN, compactHeightFor } from './src/st
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
 import { sendWebhook } from './src/webhook.js';
-import { checkForUpdate, pageUrl, downloadInstaller, sweepPartials, bannerState, remindLaterState, skipVersionState, makeSafetyCopy, installPlan, whatsNew, startupKind } from './src/updater.js';
+import { checkForUpdate, REPO, pageUrl, downloadInstaller, sweepPartials, bannerState, remindLaterState, skipVersionState, makeSafetyCopy, installPlan, whatsNew, startupKind } from './src/updater.js';
 import { createLogger } from './src/logs.js';
 import { buildSupportInfo } from './src/support.js';
 import { createAlertState } from './src/alert-state.js';
 import { createUpdateNotice } from './src/update-notice.js';
-import { buildExport, prepareImport, backupFileName, MAX_BACKUP_BYTES } from './src/backup.js';
+import { buildExport, prepareImport, backupFileName, backupTooBig, MAX_BACKUP_BYTES } from './src/backup.js';
 import { createHeartbeat } from './src/heartbeat.js';
 import { createNowPlaying } from './src/now-playing.js';
 import { createLogos } from './src/logos.js';
-import { engineHandlers } from './src/engine-events.js';
-import { shardInputs } from './src/engine-shards.js';
+import { keepIds, adoptLegacy, mergeDuplicates } from './src/logo-refs.js';
+import { EngineSupervisor, findEngine, engineProblem } from './src/engine-client.js';
+import { createEngineBridge } from './src/engine-bridge.js';
+import { resolveDevice } from './src/devices.js';
 import { aggregateDeadAir } from './src/core/stats.js';
 import { buildReport, findCommonProblems, periodRange, reportToCsv } from './src/core/report.js';
 import { toCsv, toJson } from './src/core/export.js';
@@ -55,11 +57,12 @@ let soundActive = false;
 let soundMuted = false;
 let baseStatus = null;
 let mainWindow = null;
-// Audio engine windows: [0] also owns the sound card, the alarm sound and the device list; the others only open
-// streams (see src/engine-shards.js). Each has { index, win, ready, pending }.
-const engines = [];
-const engineOf = (sender) => engines.find((e) => e.win && !e.win.isDestroyed() && e.win.webContents === sender);
-const isEngineContents = (id) => engines.some((e) => e.win && !e.win.isDestroyed() && e.win.webContents.id === id);
+// The audio is measured by the engine, a separate program written in Rust (engine/), started and kept alive by the
+// supervisor. A hidden window only plays the alarm sound.
+let soundWin = null;
+let soundReady = false;
+let supervisor = null;
+let engineBridge = null;
 let tray = null;
 let isQuitting = false;
 let blockerId = null;
@@ -92,120 +95,114 @@ const open = (v) => {
   }
 };
 
-// ---- audio engine (hidden windows) ------------------------------------------------------
-// The CORS header Web Audio needs is added to media responses of engine windows only, and only the first one
-// may use the microphone. Every extra window has its own session (its own connection pool).
-const configuredSessions = new WeakSet();
-function configureEngineSession(ses, allowMic) {
-  if (configuredSessions.has(ses)) return;
-  configuredSessions.add(ses);
-  ses.setPermissionRequestHandler((wc, permission, cb, details) => cb(allowMic && permission === 'media' && !!wc && engines[0]?.win?.webContents === wc && !(details.mediaTypes || []).includes('video')));
-  ses.setPermissionCheckHandler((wc, permission) => allowMic && permission === 'media' && !!wc && engines[0]?.win?.webContents === wc);
-  // Stream servers rarely send CORS headers; without them a Web Audio graph is fed silence.
-  ses.webRequest.onHeadersReceived({ urls: ['http://*/*', 'https://*/*'] }, (details, cb) => {
-    if (details.resourceType !== 'media' || !isEngineContents(details.webContentsId)) return cb({});
-    const headers = { ...details.responseHeaders };
-    for (const k of Object.keys(headers)) if (k.toLowerCase() === 'access-control-allow-origin') delete headers[k];
-    headers['Access-Control-Allow-Origin'] = ['*'];
-    cb({ responseHeaders: headers });
-  });
+// ---- audio engine (Rust, separate process) --------------------------------------------------
+// The engine reads the sound cards and decodes the streams itself: no browser limit on the number of streams, no
+// permission prompt of the web engine. If it ends by itself the supervisor starts it again with the same inputs.
+const engine = {
+  sync: (list) => engineBridge?.sync(list),
+  stop: () => engineBridge?.stop()
+};
+
+// The logos: files of earlier versions (named after their input) are given to their inputs, pictures stored more than once
+// (a file for each stream of a station) are merged into one, and a file no input uses is deleted. Returns the settings.
+function tidyLogos() {
+  let { inputs, stations } = store.getSettings();
+  const adopted = adoptLegacy(inputs, logos.ids());
+  if (adopted) inputs = adopted;
+  const merged = mergeDuplicates(inputs, logos.hashes(), stations);
+  if (merged) ({ inputs, stations } = merged);
+  const next = adopted || merged ? store.updateSettings({ inputs, stations }) : store.getSettings();
+  logos.prune(keepIds(next.inputs, next.stations));
+  if (merged) clog(`${merged.remove.length} logo(s) that were the same picture merged into one`, 'info', 'logos');
+  return next;
 }
 
-function createEngineWindow(index) {
-  const partition = index === 0 ? undefined : `engine-${index}`;
-  const eng = { index, win: null, ready: false, pending: null };
-  engines[index] = eng;
-  configureEngineSession(partition ? session.fromPartition(partition) : session.defaultSession, index === 0);
-  eng.win = new BrowserWindow({
+// A configuration saved by the previous version (or imported from a backup of it) holds the device ids of the browser
+// engine. Those inputs are found again by the name of the card, and only when exactly one device has it: the new id
+// is saved, so the settings window shows the card as chosen. A card that is not found stays as it is, marked "not found".
+let applySettingsChanged = () => {};
+function migrateDeviceIds(devices) {
+  if (!store) return;
+  let changed = 0;
+  const inputs = store.getSettings().inputs.map((i) => {
+    if (i.type !== 'device' || !i.deviceId) return i;
+    const r = resolveDevice(i.deviceId, i.deviceLabel, devices);
+    if (r.via !== 'label' || r.id === i.deviceId) return i;
+    changed++;
+    return { ...i, deviceId: r.id };
+  });
+  if (!changed) return;
+  clog(`${changed} sound card(s) found again by name: their ids were updated`, 'info', 'engine');
+  applySettingsChanged(store.updateSettings({ inputs }));
+}
+
+function startEngine() {
+  const binary = findEngine({ resourcesPath: process.resourcesPath, rootDir: __dirname });
+  if (!binary) {
+    clog('audio engine not found: nothing can be measured', 'error', 'engine');
+    return;
+  }
+  supervisor = new EngineSupervisor({ binary });
+  engineBridge = createEngineBridge({
+    supervisor,
+    getMonitor: () => monitor,
+    getLabel: (id) => store.getSettings().inputs.find((i) => i.id === id)?.deviceLabel || '',
+    getName: (id) => {
+      const s = store.getSettings();
+      const inp = s.inputs.find((i) => i.id === id);
+      return inp ? inputLabel(s.language, inp, s.stations) : '';
+    },
+    onDevices: migrateDeviceIds,
+    log: (m, level) => clog(m, level, 'engine')
+  });
+  // an engine that cannot start for a reason the person can fix (Linux without libasound2): said in the window, until it runs
+  supervisor.on('exit', (info) => setEngineProblem(engineProblem(info)));
+  supervisor.on('event', (ev) => ev.event === 'ready' && setEngineProblem(null));
+  supervisor.start();
+}
+let currentEngineProblem = null;
+function setEngineProblem(p) {
+  if (JSON.stringify(p) === JSON.stringify(currentEngineProblem)) return;
+  currentEngineProblem = p;
+  if (p) clog(`audio engine cannot start: ${p.kind}${p.lib ? ' ' + p.lib : ''}`, 'error', 'engine');
+  sendUi('event:engine-problem', p);
+}
+
+// ---- alarm sound (hidden window) ------------------------------------------------------------
+function createSoundWindow() {
+  soundReady = false;
+  soundWin = new BrowserWindow({
     show: false,
     width: 200,
     height: 100,
     webPreferences: {
-      preload: path.join(__dirname, 'engine-preload.cjs'),
+      preload: path.join(__dirname, 'sound-preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       backgroundThrottling: false,
-      autoplayPolicy: 'no-user-gesture-required',
-      ...(partition ? { partition } : {})
+      autoplayPolicy: 'no-user-gesture-required'
     }
   });
-  eng.win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  eng.win.webContents.on('will-navigate', (e) => e.preventDefault());
-  eng.win.loadFile(path.join(__dirname, 'renderer', 'engine.html'));
-  // The engine must never stay dead silently: a crashed or frozen renderer is replaced.
+  soundWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  soundWin.webContents.on('will-navigate', (e) => e.preventDefault());
+  soundWin.loadFile(path.join(__dirname, 'renderer', 'sound.html'));
+  // The alarm must never stay mute silently: a crashed or frozen window is replaced.
   const restart = (why) => {
-    clog(`engine ${index} restart: ${why}`, 'warn', 'engine');
-    const old = eng.win;
-    eng.win = null;
+    clog(`sound window restart: ${why}`, 'warn', 'engine');
+    const old = soundWin;
+    soundWin = null;
+    soundReady = false;
     if (old && !old.isDestroyed()) old.destroy();
-    if (isQuitting) return;
-    const fresh = createEngineWindow(index);
-    monitor?.engineRestarted();
-    if (monitor?.isRunning()) fresh.pending = shardInputs(monitor.engineList())[index] || [];
+    if (!isQuitting) createSoundWindow();
   };
-  eng.win.webContents.on('render-process-gone', (_e, d) => restart(d.reason));
-  eng.win.on('unresponsive', () => restart('unresponsive'));
-  return eng;
+  soundWin.webContents.on('render-process-gone', (_e, d) => restart(d.reason));
+  soundWin.on('unresponsive', () => restart('unresponsive'));
 }
 
-function closeEngine(index) {
-  const eng = engines[index];
-  if (!eng) return;
-  engines[index] = undefined;
-  if (eng.win && !eng.win.isDestroyed()) eng.win.destroy();
-  while (engines.length && !engines[engines.length - 1]) engines.pop();
-}
-
-const sendEngine = (eng, channel, payload) => {
-  if (eng?.ready && eng.win && !eng.win.isDestroyed()) eng.win.webContents.send(channel, payload);
+const sendSound = (payload) => {
+  if (soundReady && soundWin && !soundWin.isDestroyed()) soundWin.webContents.send('sound:play', payload);
 };
-
-const engine = {
-  // list: every input the engine must open; each window gets its share, windows that are no longer needed close
-  sync(list) {
-    const shards = shardInputs(list);
-    shards.forEach((inputs, index) => {
-      const eng = engines[index] || createEngineWindow(index);
-      eng.pending = inputs;
-      sendEngine(eng, 'engine:sync', inputs);
-    });
-    for (let index = engines.length - 1; index >= shards.length; index--) closeEngine(index);
-  },
-  stop() {
-    for (const eng of engines) {
-      if (!eng) continue;
-      eng.pending = null;
-      sendEngine(eng, 'engine:stop');
-    }
-    for (let index = engines.length - 1; index >= 1; index--) closeEngine(index);
-  }
-};
-
-let rpcSeq = 0;
-const rpcWaiting = new Map();
-function engineRpc(op, timeoutMs = 60_000, arg) {
-  return new Promise((resolve, reject) => {
-    const eng = engines[0];
-    if (!eng?.ready || !eng.win) return reject(new Error('engine-not-ready'));
-    const id = ++rpcSeq;
-    const timer = setTimeout(() => {
-      rpcWaiting.delete(id);
-      reject(new Error('timeout'));
-    }, timeoutMs);
-    rpcWaiting.set(id, { resolve, reject, timer });
-    eng.win.webContents.send('engine:rpc', { id, op, arg });
-  });
-}
-
-// messages from any engine window
-function fromEngine(channel, handler) {
-  ipcMain.on(channel, (e, ...args) => {
-    const eng = engineOf(e.sender);
-    if (!eng) return;
-    handler(...args);
-  });
-}
 
 // ---- main window ------------------------------------------------------------------------
 // the saved window is used only if it still lies on a screen that exists (a monitor may have been unplugged)
@@ -445,10 +442,10 @@ function applyKeepAwake() {
   }
 }
 
-// Audible alarm: played by the engine window (always alive), stopped by recovery or by the user.
+// Audible alarm: played by the sound window (always alive), stopped by recovery or by the user.
 function applySound() {
   const snd = store.getSettings().notifications.sound;
-  sendEngine(engines[0], 'engine:sound', { on: soundActive && !soundMuted && snd.enabled, volume: snd.volume });
+  sendSound({ on: soundActive && !soundMuted && snd.enabled, volume: snd.volume });
 }
 
 function setAlarmSound(on) {
@@ -499,7 +496,9 @@ const setUpdateState = (patch) => store.updateSettings({ updateState: { ...store
 
 function checkUpdatesNow(manual) {
   const s = store.getSettings();
-  return checkForUpdate({ repo: s.general.updateRepo, current: app.getVersion(), fetchFn: (u, o) => net.fetch(u, o) }).then((r) => {
+  // Always this version's own repository (src/updater.js). Not the `updateRepo` setting: a backup imported from the public
+  // Dead Air Watchdog carries that one, and this test version would offer its releases (26.11.3) as an update.
+  return checkForUpdate({ repo: REPO, current: app.getVersion(), fetchFn: (u, o) => net.fetch(u, o) }).then((r) => {
     if (r.ok) updateInfo = r;
     if (downloadedFor && (!r.ok || r.latest !== downloadedFor)) {
       downloadedFile = null; // a newer release came out: download again
@@ -529,7 +528,7 @@ function registerIpc() {
   handle('delivery:get', () => faultList());
   // everything that has to follow a change of the settings (also used by the backup import)
   function settingsChanged(next) {
-    logos.prune(next.inputs.map((i) => i.id)); // logos of removed inputs
+    logos.prune(keepIds(next.inputs, next.stations)); // logos no input and no station uses any more
     applyGeneralSettings(next);
     applyWindowMode(next);
     monitor.syncInputs(); // inputs added, removed or edited while monitoring
@@ -546,6 +545,7 @@ function registerIpc() {
     announceUpdate(); // a channel switched on now hears about a version it has not been told yet
     return next;
   }
+  applySettingsChanged = settingsChanged;
   handle('settings:update', (patch) => settingsChanged(store.updateSettings(patch)));
   // compact view and always on top: one button each in the window, one item each in the tray menu; both are remembered
   toggleWindowView = (key) => settingsChanged(store.updateSettings({ window: { [key]: !store.getSettings().window[key] } }));
@@ -555,15 +555,21 @@ function registerIpc() {
   });
 
   // ---- configuration backup ----
-  handle('backup:export', async (includeSecrets) => {
+  handle('backup:export', async (includeSecrets, includeLogos) => {
     includeSecrets = includeSecrets === true;
-    const r = await dialog.showSaveDialog(mainWindow, { defaultPath: path.join(app.getPath('documents'), backupFileName()), filters: [{ name: 'JSON', extensions: ['json'] }] });
-    if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+    includeLogos = includeLogos !== false;
     try {
-      const file = buildExport(store.getSettings(), { includeSecrets });
-      fs.writeFileSync(r.filePath, JSON.stringify(file, null, 2), { mode: includeSecrets ? 0o600 : 0o644 });
+      // built first: a file that is too big is refused before the person is asked where to save it
+      const file = buildExport(store.getSettings(), { includeSecrets, logos: includeLogos ? logos.all() : {} });
+      const text = JSON.stringify(file, null, 2);
+      const size = Buffer.byteLength(text);
+      // what is exported can always be imported: the same limit applies to both
+      if (backupTooBig(text)) return { ok: false, error: file.logos ? 'too-big-logos' : 'too-big', size, limit: MAX_BACKUP_BYTES };
+      const r = await dialog.showSaveDialog(mainWindow, { defaultPath: path.join(app.getPath('documents'), backupFileName()), filters: [{ name: 'JSON', extensions: ['json'] }] });
+      if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+      fs.writeFileSync(r.filePath, text, { mode: includeSecrets ? 0o600 : 0o644 });
       if (includeSecrets) fs.chmodSync(r.filePath, 0o600); // also when the file already existed
-      return { ok: true, file: r.filePath, includesSecrets: includeSecrets, inputs: file.inputs.length };
+      return { ok: true, file: r.filePath, includesSecrets: includeSecrets, inputs: file.inputs.length, logos: Object.keys(file.logos || {}).length, size };
     } catch (err) {
       return { ok: false, error: String(err.message).slice(0, 300) };
     }
@@ -576,8 +582,17 @@ function registerIpc() {
       if (fs.statSync(r.filePaths[0]).size > MAX_BACKUP_BYTES) return { ok: false, error: 'too-big' };
       const plan = prepareImport(fs.readFileSync(r.filePaths[0], 'utf8'), store.getSettings(), { mode });
       if (!plan.ok) return plan;
-      settingsChanged(store.updateSettings(plan.settings));
-      return { ok: true, mode, missing: plan.missing, added: plan.added };
+      // the logos first: the window reads them again when the settings change
+      const have = new Set(logos.ids());
+      for (const [id, url] of Object.entries(plan.logos || {})) {
+        if (mode === 'add' && have.has(id)) continue; // adding inputs never changes a logo that is already here
+        try { logos.set(id, url); } catch { /* left out */ }
+      }
+      // logos copied by hand (a file named after its input) are given to their inputs, and equal pictures merged, before the
+      // clean-up of settingsChanged
+      store.updateSettings(plan.settings);
+      settingsChanged(tidyLogos());
+      return { ok: true, mode, missing: plan.missing, added: plan.added, logos: Object.keys(plan.logos || {}).length };
     } catch (err) {
       return { ok: false, error: String(err.message).slice(0, 300) };
     }
@@ -589,20 +604,25 @@ function registerIpc() {
   handle('nowplaying:get', () => nowPlaying.get());
 
   handle('logos:all', () => logos.all());
-  handle('logos:set', (id, dataUrl) => {
+  // deletes a logo and takes it off the inputs that used it
+  handle('logos:delete', (id) => {
     try {
-      logos.set(id, dataUrl);
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err.message };
+      logos.remove(String(id || ''));
+    } catch {
+      return { ok: false };
     }
+    const { inputs, stations } = store.getSettings();
+    if (inputs.some((i) => i.logo === id) || stations.some((st) => st.logo === id)) {
+      const off = (x) => (x.logo === id ? { ...x, logo: '' } : x);
+      settingsChanged(store.updateSettings({ inputs: inputs.map(off), stations: stations.map(off) }));
+    }
+    return { ok: true };
   });
-  handle('logos:remove', (id) => {
+  handle('logos:add', (dataUrl) => {
     try {
-      logos.remove(id);
-      return { ok: true };
-    } catch (err) {
-      return { ok: false, error: err.message };
+      return { ok: true, id: logos.add(dataUrl) };
+    } catch {
+      return { ok: false };
     }
   });
 
@@ -612,7 +632,7 @@ function registerIpc() {
     pushStatus();
   });
   handle('audio:test-sound', (volume) => {
-    sendEngine(engines[0], 'engine:sound', { on: true, test: true, volume });
+    sendSound({ on: true, test: true, volume });
   });
   handle('heartbeat:test', (url) => heartbeat.ping(typeof url === 'string' ? url.trim() : ''));
 
@@ -636,7 +656,7 @@ function registerIpc() {
     const s = store.getSettings();
     const kind = ['thisMonth', 'lastMonth', 'last7', 'last30'].includes(period) ? period : 'thisMonth';
     const range = periodRange(kind, Date.now());
-    const inputs = s.inputs.map((i) => ({ id: i.id, name: inputLabel(s.language, i), schedule: i.schedule }));
+    const inputs = s.inputs.map((i) => ({ id: i.id, name: inputLabel(s.language, i, s.stations), schedule: i.schedule }));
     return { kind, report: buildReport(store.listEvents(), inputs, range) };
   };
   handle('report:get', (period) => {
@@ -667,11 +687,11 @@ function registerIpc() {
   handle('audio:access-status', () => (process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('microphone') : 'granted'));
   // how many channels a device really has (null when it cannot be opened): the channel choices show only those
   handle('audio:channels', async (deviceId) => {
-    try { return await engineRpc('channels', 15_000, String(deviceId || '').slice(0, 300)); } catch { return null; }
+    try { return (await engineBridge?.channels(String(deviceId || '').slice(0, 300))) ?? null; } catch { return null; }
   });
   handle('audio:devices', async () => {
     if (process.platform === 'darwin' && !(await systemPreferences.askForMediaAccess('microphone'))) return { granted: false, devices: [] };
-    return engineRpc('devices');
+    try { return { granted: true, devices: (await engineBridge?.devices()) ?? [] }; } catch { return { granted: true, devices: [] }; }
   });
 
   handle('notify:test', async (channel, cfg) => {
@@ -766,11 +786,13 @@ function registerIpc() {
     } catch {
       /* not packaged */
     }
-    return whatsNew(text, app.getVersion()) || { version: app.getVersion(), date: '', bullets: [] };
+    const nw = whatsNew(text, app.getVersion()) || { version: app.getVersion(), date: '', bullets: [] };
+    return { ...nw, intro: !store.getSettings().engineIntroSeen }; // the new engine and the stations: said once, to the ones who update
   });
+  handle('engine:problem', () => currentEngineProblem);
   handle('whatsnew:seen', () => {
     startKind = 'same';
-    store.updateSettings({ lastSeenVersion: app.getVersion() });
+    store.updateSettings({ lastSeenVersion: app.getVersion(), engineIntroSeen: true });
     return true;
   });
 
@@ -842,6 +864,7 @@ app.whenReady().then(() => {
   store.flush();
 
   logos = createLogos(path.join(app.getPath('userData'), 'logos'));
+  tidyLogos(); // logos made before the library, the same picture stored many times, files nobody uses
   alertState = createAlertState({ file: path.join(app.getPath('userData'), 'alert-state.json') });
   updateNotice = createUpdateNotice({
     getSettings: () => store.getSettings(),
@@ -888,21 +911,10 @@ app.whenReady().then(() => {
 
   if (process.platform === 'darwin' && app.dock) app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png')));
 
-  ipcMain.on('engine:ready', (e) => {
-    const eng = engineOf(e.sender);
-    if (!eng) return;
-    eng.ready = true;
-    if (eng.pending) sendEngine(eng, 'engine:sync', eng.pending);
-    if (eng.index === 0) applySound();
-  });
-  for (const [channel, handler] of Object.entries(engineHandlers(monitor))) fromEngine(channel, handler);
-  ipcMain.on('engine:rpc-result', (e, msg) => {
-    if (engineOf(e.sender)?.index !== 0) return;
-    const w = rpcWaiting.get(msg.id);
-    if (!w) return;
-    clearTimeout(w.timer);
-    rpcWaiting.delete(msg.id);
-    msg.error ? w.reject(new Error(msg.error)) : w.resolve(msg.result);
+  ipcMain.on('sound:ready', (e) => {
+    if (!soundWin || soundWin.isDestroyed() || e.sender !== soundWin.webContents) return;
+    soundReady = true;
+    applySound();
   });
 
   heartbeat = createHeartbeat({ getSettings: () => store.getSettings(), fetchFn: (u, o) => net.fetch(u, o), version: app.getVersion(), log: (m, level) => clog(m, level, 'heartbeat') });
@@ -916,7 +928,8 @@ app.whenReady().then(() => {
   });
   nowPlaying.start();
   registerIpc();
-  createEngineWindow(0);
+  createSoundWindow();
+  startEngine();
   createWindow();
   createTray();
   applyAppMenu(); // now with the settings: the Window menu gets "Compact view" and "Always on top"
@@ -953,6 +966,7 @@ app.on('before-quit', () => {
     heartbeat?.stop();
     nowPlaying?.stop();
     dispatcher?.cancelPending();
+    engineBridge?.shutdown();
     store?.flush();
   } catch (err) {
     clog(String(err?.stack || err), 'error', 'quit');

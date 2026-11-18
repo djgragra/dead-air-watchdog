@@ -10,7 +10,7 @@ L'app è gratuita e non ha un certificato Apple o Microsoft, quindi al primo avv
 
 - **Windows**: avvia l'installer. Se SmartScreen dice «Windows ha protetto il PC», clicca *Ulteriori informazioni* → *Esegui comunque*.
 - **macOS**: apri l'immagine disco e trascina l'app in Applicazioni. L'app è firmata ad-hoc, ed è ciò che serve a un Mac Apple silicon per aprirla. Il primo avvio mostra comunque l'avviso «sviluppatore non identificato»: apri *Impostazioni di Sistema → Privacy e sicurezza*, scorri in basso e clicca *Apri comunque* (il clic destro → Apri non esiste più da macOS 15). Se una versione precedente dice che l'app è «danneggiata», esegui una volta nel Terminale: `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`
-- **Linux**: rendi eseguibile l'AppImage (`chmod +x Dead-Air-Watchdog-*.AppImage`) e avviala.
+- **Linux**: l'app ha bisogno della libreria audio di sistema **libasound2** (il motore audio ci è collegato, anche se monitori solo flussi) e, per aprire un AppImage, di FUSE. Installale prima: Debian, Ubuntu e derivate `sudo apt install libasound2 libfuse2` (Ubuntu 24.04 e Debian 13: `sudo apt install libasound2t64 libfuse2t64`); Fedora `sudo dnf install alsa-lib fuse-libs`; Arch `sudo pacman -S alsa-lib fuse2`. Poi rendi eseguibile l'AppImage (`chmod +x Dead-Air-Watchdog-*.AppImage`) e avviala. Se manca libasound2 l'app si apre lo stesso e un banner rosso lo dice, con questi comandi.
 
 L'app si apre sempre in inglese; scegli Italiano o Español nelle impostazioni e la scelta viene ricordata. Il tema è scuro per default, con chiaro e di sistema disponibili.
 
@@ -18,7 +18,7 @@ L'app si apre sempre in inglese; scegli Italiano o Español nelle impostazioni e
 
 ## Come funziona
 
-Ogni 100 ms il motore audio (una finestra nascosta, così continua a funzionare quando la finestra principale è chiusa) calcola il livello di ogni canale, in **dBFS**. Il canale più forte viene confrontato con la soglia; **silenzio significa che tutti i canali sono sotto**.
+Ogni 100 ms il motore audio (un programma separato, così continua a funzionare quando la finestra principale è chiusa) misura il livello di ogni canale, in **dBFS**. Il canale più forte viene confrontato con la soglia; **silenzio significa che tutti i canali sono sotto**.
 
 - Sotto la soglia l'ingresso è *in conteggio* (giallo). Quando dura almeno il tempo configurato, diventa un *allarme* (rosso) e partono gli avvisi. Il silenzio è datato dal suo primo momento di quiete.
 - L'audio è *tornato* solo dopo che resta uguale o sopra la soglia per 2 secondi di fila, oppure 2 secondi in totale entro 5 secondi: un solo clic in un tratto di silenzio non fa ripartire il conteggio, e il parlato con pause tra le parole conta come audio.
@@ -37,9 +37,23 @@ In *Impostazioni → Ingressi* aggiungi fino a 32 ingressi, in qualsiasi combina
 - **Altre opzioni** di ogni ingresso: *Giallo dopo…* (2 secondi per default: il semaforo resta verde finché l'audio non è stato sotto soglia per quel tempo), gli **orari di monitoraggio** (giorni e ore, anche oltre la mezzanotte, in cui l'ingresso non viene monitorato o ha una propria soglia e un proprio tempo) e l'**allarme per audio bloccato** (spento per default: il livello resta entro un piccolo intervallo, 1 dB per default, per almeno 10 secondi pur essendo sopra la soglia: un tono fisso, un loop bloccato o rumore costante).
 - **Now playing (titolo del brano)**: in *Altre opzioni* di uno **stream**, *Mostra il titolo del brano (now playing) sulla tile* (spenta di default). Molti server Icecast e Shoutcast annunciano il titolo del brano dentro lo stream; con la scelta attiva l'app lo chiede al server con una breve richiesta in più ogni 20 secondi (pochi kilobyte, l'audio letto per questo viene scartato) e lo mostra sotto lo stato dell'ingresso nella Dashboard, nella vista compatta (quando l'ingresso è OK) e nel Wall display. Funziona solo durante il monitoraggio e con la finestra visibile. Non cambia mai ciò che si misura né quando scatta un allarme, non entra negli avvisi, e un server che non manda i titoli non mostra nulla.
 
+## Stazioni
+
+Una radio ha spesso più flussi: Giornale Radio può averne otto, GRNews due. Una **stazione** li raggruppa: un nome, un logo e i flussi sotto di lei.
+
+- *Impostazioni → Ingressi → Stazioni → Crea stazione*: dai un **nome** e un **logo** (scegli un'immagine, oppure *Usa un logo già caricato…*) e scegli il **flusso mostrato a stazione chiusa**: il titolo del brano (now playing) e il livello della stazione chiusa sono i suoi.
+- I flussi di una stazione stanno **dentro la sua scheda**, e un flusso che è in una stazione non compare più tra quelli liberi. Per mettere un flusso in una stazione: **trascinalo dalla maniglia ⠿** sulla stazione (per toglierlo, trascinalo sull'elenco dei flussi liberi), oppure scegli la stazione nel menu *Stazione* del flusso, oppure usa *Aggiungi un flusso già configurato* nella scheda della stazione, o *Aggiungi un flusso a questa stazione* per uno nuovo; *Togli dalla stazione* fa il contrario. Un flusso tiene il **suo nome e il suo logo**, che sostituiscono quelli della stazione. In una stazione dai ai flussi nomi brevi (*Nazionale*): sotto la loro stazione si vedono con quel nome, e ovunque i flussi sono mostrati da soli (la vista *Per ingresso*, gli avvisi, il registro) davanti c'è la stazione (*Giornale Radio · Nazionale*; non si ripete se il nome la contiene già). Un flusso senza nome proprio si chiama come la sua stazione e il suo indirizzo.
+- Ogni stazione ha un **colore** (assegnato dall'app, modificabile nella scheda della stazione); la stazione e i suoi flussi lo condividono in ogni vista, come striscia laterale e colore del nome, per far capire che sono un gruppo.
+- Il pulsante **Per stazione / Per ingresso** (in alto nella finestra, nella vista compatta e nel Wall display) sceglie cosa si vede, ovunque. Per stazione, ogni stazione è una tessera: logo, nome, lo stato del suo flusso peggiore, titolo del brano e livello del flusso mostrato. Una stazione chiusa mostra **un puntino per ogni flusso** (verde, giallo, rosso, blu se in pausa; il nome del flusso è nel suggerimento). Una **nota gialla** compare sulla stazione chiusa appena uno dei suoi flussi sta contando un silenzio, prima di ogni allarme.
+- Un clic sulla stazione **apre i suoi flussi**, ognuno con nome, logo e stato; un altro clic li chiude. Una stazione in cui un flusso è in dead air **si apre da sola** e non si può chiudere finché l'audio non torna. Se cadono molte stazioni insieme, le prime quattro si aprono da sole e le altre restano chiuse in rosso, con la riga *+N altre stazioni in dead air*: un clic le apre. Il Wall display funziona allo stesso modo, con la grafica di sempre (orologio e stato in alto, tessere grandi): la stazione resta come prima tessera, con la freccia per richiuderla, seguita dai suoi flussi; un clic sulla tessera la apre e la chiude. La freccia è grande e colorata per vedersi.
+- Gli avvisi non cambiano: uno per ogni flusso, ora con **la stazione e il flusso** (*Giornale Radio · Rete 1*; la stazione non si ripete se il nome già la contiene). I flussi che non sono in nessuna stazione restano tessere a sé.
+- Il backup salva le stazioni con i loro loghi, e *Includi i loghi* si può spegnere.
+
 ## Dashboard e Wall display
 
 La **Dashboard** mostra un grande semaforo con lo stato peggiore di tutti gli ingressi (verde: tutto OK; giallo: un conteggio è in corso; rosso: dead air; grigio: fermo) e una tessera per ingresso con il suo stato, il suo conteggio e un misuratore di livello dal vivo con la soglia segnata.
+
+Gli **avvisi di un ingresso** (*Impostazioni → Ingressi → l'ingresso → Avvisi*) hanno tre modi. *Attivi* è il solito. *Spenti* tiene l'ingresso misurato, visibile e nel registro ma non manda messaggi né suono e lo lascia fuori dallo stato generale (il grande TUTTO OK e il colore del Wall display): per un ingresso che serve solo da guardare. *Indicatore* mostra solo **AUDIO SÌ / AUDIO NO** sulla tessera (il livello contro la soglia; un calo più breve del ritardo giallo non è un NO), senza conto alla rovescia, allarme né registro; se spunti *L'AUDIO NO conta nello stato generale* diventa un giallo dello stato generale, mai un allarme e mai un messaggio. La tessera dice *avvisi spenti* o *indicatore*. Non è la pausa: la pausa finisce da sola e mostra IN PAUSA, questo resta finché non lo cambi.
 
 Su ogni tessera, **Metti in pausa gli avvisi di questo ingresso** spegne gli avvisi di quell'ingresso per 1 ora o fino a domani alle 06:00 (per manutenzione). La pausa finisce da sola, sopravvive a un riavvio ed è scritta nel registro; l'ingresso viene comunque misurato e mostrato come IN PAUSA.
 
@@ -108,6 +122,7 @@ Poiché i computer che fanno girare quest'app sono spesso lasciati da soli, una 
 | macOS: «l'app è danneggiata / non può essere aperta» | Apri *Impostazioni di Sistema → Privacy e sicurezza → Apri comunque*; per una versione precedente, esegui nel Terminale `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"`. |
 | Windows: «Windows ha protetto il PC» | *Ulteriori informazioni* → *Esegui comunque*. |
 | Linux: l'AppImage non si avvia | Rendila eseguibile (`chmod +x`) e installa FUSE (`libfuse2`) se il tuo sistema lo richiede. |
+| Linux: banner rosso "il motore audio non parte" | Manca la libreria `libasound2`: installala (vedi *Installazione*), poi chiudi e riapri l'app. |
 | La scheda audio dice «non trovato» | Il dispositivo salvato non c'è più: ricollegalo, premi *Aggiorna l'elenco* e sceglilo di nuovo. |
 | Un ingresso mostra «offline» | Il dispositivo manca o lo stream è caduto; l'app si riconnette da sola. |
 | Non arriva nessun avviso | Usa *Invia prova* in *Impostazioni → Avvisi* e leggi il messaggio d'errore. |

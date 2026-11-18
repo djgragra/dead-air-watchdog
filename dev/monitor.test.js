@@ -300,22 +300,24 @@ test('start refuses when no input is usable; invalid URLs and disabled inputs ar
 });
 
 test('engine events: fault and recovery are routed by input id (an input must not stay offline after the stream is back)', async () => {
-  const { engineHandlers } = await import('../src/engine-events.js');
+  const { routeEngineEvent } = await import('../src/engine-events.js');
   const { m, advance, sent } = setup({ inputs: [INPUT_A, INPUT_B] });
-  const h = engineHandlers(m);
+  const route = (ev) => routeEngineEvent(m, ev);
   m.start();
   advance(3000, -20);
-  h['engine:fault']('a', 'stream-error'); // what engine-preload sends: (id, reason)
+  route({ event: 'fault', id: 'a', reason: 'stream-error', detail: 'Cannot connect' }); // what the engine sends
   advance(1000, -20); // the fault makes the input count as offline even while reports still arrive
   let st = m.status();
   assert.deepEqual(st.inputs.map((i) => [i.state, i.fault]), [['counting', 'stream-error'], ['ok', null]]);
-  h['engine:ok']('a'); // the stream is back
+  route({ event: 'ok', id: 'a' }); // the stream is back
   st = m.status();
   assert.equal(st.inputs[0].fault, null);
   advance(25_000, -20);
   assert.equal(m.status().overall, 'ok');
   assert.equal(sent.length, 0, 'a transient fault must not leave a permanent dead-air alarm');
-  h['engine:levels']({ a: { rms: [-20, -20], peak: [-20, -20] } }); // does not throw for a partial batch
+  route({ event: 'levels', inputs: { a: { rms: [-20, -20], peak: [-20, -20] } } }); // does not throw for a partial batch
+  route({ event: 'ready' }); // events the monitor does not use are ignored
+  route(undefined);
 });
 
 test('26.11.2: a fault of an old setup is forgotten when the device or the channel changes (the engine opens it again)', () => {
@@ -342,4 +344,45 @@ test('26.11.2: a fault stays when the settings change but the setup of the engin
   store.updateSettings({ inputs: [{ ...DEV, thresholdDb: -45 }] });
   m.syncInputs();
   assert.equal(m.status().inputs[0].fault, 'NotReadableError');
+});
+
+test('an input without alerts: watched and logged, but no message, no sound, and outside the overall state', () => {
+  const { m, store, sent, sounds, advance } = setup({ inputs: [{ ...INPUT_A, alerts: 'off' }, INPUT_B] });
+  m.start();
+  advance(5000, { a: -20, b: -20 });
+  advance(25_000, { a: -80, b: -20 });
+  const st = m.status();
+  assert.equal(st.inputs.find((i) => i.id === 'a').state, 'alarm', 'it is shown as in alarm');
+  assert.equal(st.overall, 'ok', 'but the overall state is that of the others');
+  assert.equal(st.counts.alarm, 0);
+  assert.equal(sent.length, 0, 'nothing is sent');
+  assert.ok(!sounds.includes(true), 'no alarm sound');
+  assert.equal(store.listEvents().filter((e) => e.kind === 'dead-air').length, 1, 'it stays in the log');
+  advance(5000, { a: -20, b: -20 });
+  assert.equal(sent.length, 0, 'not even the recovery is sent');
+  assert.ok(store.listEvents()[0].end > 0);
+});
+
+test('an indicator: AUDIO YES or AUDIO NO, no countdown, no log, no message; it counts in the overall state only if set to', () => {
+  const quiet = setup({ inputs: [{ ...INPUT_A, alerts: 'indicator' }] });
+  quiet.m.start();
+  quiet.advance(5000, -20);
+  assert.equal(quiet.m.status().inputs[0].state, 'audio-yes');
+  quiet.advance(60_000, -80);
+  assert.equal(quiet.m.status().inputs[0].state, 'audio-no', 'no alarm however long it lasts');
+  assert.equal(quiet.m.status().overall, 'ok', 'outside the overall state');
+  assert.equal(quiet.sent.length, 0);
+  assert.equal(quiet.store.listEvents().length, 0, 'nothing in the log');
+  assert.ok(!quiet.sounds.includes(true));
+  quiet.advance(3000, -20);
+  assert.equal(quiet.m.status().inputs[0].state, 'audio-yes');
+
+  const counts = setup({ inputs: [{ ...INPUT_A, alerts: 'indicator', indicatorCounts: true }, INPUT_B] });
+  counts.m.start();
+  counts.advance(5000, { a: -20, b: -20 });
+  assert.equal(counts.m.status().overall, 'ok');
+  counts.advance(5000, { a: -80, b: -20 });
+  assert.equal(counts.m.status().overall, 'counting', 'AUDIO NO is a yellow of the overall state, never red');
+  assert.equal(counts.m.status().counts.alarm, 0);
+  assert.equal(counts.sent.length, 0);
 });

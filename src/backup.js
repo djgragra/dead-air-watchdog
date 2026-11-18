@@ -4,20 +4,25 @@
 // be tested. Settings here are the plain ones; sealed values (enc:v1:) never come out of a file.
 import { sanitizeSettings, MAX_INPUTS } from './store.js';
 import { SEALED_PREFIX, secretSlots, stripSecrets, withoutUserInfo, hasUserInfo } from './secrets.js';
+import { decodeLogo } from './logos.js';
 
 export const BACKUP_APP = 'dead-air-watchdog';
 export const BACKUP_VERSION = 1;
-export const MAX_BACKUP_BYTES = 2_000_000;
+// The logos (small PNG files, up to 400 kB each, 32 inputs at most) travel inside the file as data URLs.
+export const MAX_BACKUP_BYTES = 20_000_000;
+// The same limit applies to what is written and to what is read: a backup the app writes can always be read back.
+export const backupTooBig = (text) => Buffer.byteLength(text) > MAX_BACKUP_BYTES;
 // kept on this PC, not part of the file: what the user was told once
-const RUNTIME_KEYS = ['micExplained', 'closeHintShown', 'updateState', 'lastSeenVersion', 'window', 'compactWindow'];
+const RUNTIME_KEYS = ['micExplained', 'closeHintShown', 'updateState', 'lastSeenVersion', 'engineIntroSeen', 'window', 'compactWindow'];
 
 const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
 const dateStamp = (ms) => new Date(ms).toISOString().slice(0, 10);
 
 export const backupFileName = (now = Date.now()) => `${BACKUP_APP}-backup-${dateStamp(now)}.json`;
 
-// settings: the plain settings of the app. Returns the object to write as JSON.
-export function buildExport(settings, { includeSecrets = false, now = Date.now() } = {}) {
+// settings: the plain settings of the app. logos: { logoId: PNG data URL } of the stored logos: only the ones the inputs
+// in the file use go in, each once even if several inputs share it. Returns the object to write as JSON.
+export function buildExport(settings, { includeSecrets = false, now = Date.now(), logos = {} } = {}) {
   let s = structuredClone(settings);
   let emptied = [];
   if (!includeSecrets) ({ settings: s, emptied } = stripSecrets(s));
@@ -26,6 +31,12 @@ export function buildExport(settings, { includeSecrets = false, now = Date.now()
   delete s.inputs;
   const file = { app: BACKUP_APP, version: BACKUP_VERSION, exportedAt: new Date(now).toISOString(), includesSecrets: !!includeSecrets, settings: s, inputs };
   if (emptied.length) file.emptiedSecrets = emptied; // which secrets had a value and were left out
+  const kept = {};
+  const stationsOf = Array.isArray(s.stations) ? s.stations : [];
+  for (const x of [...inputs, ...stationsOf]) { // the logos of the inputs and of the stations, each once
+    if (x.logo && isObj(logos) && typeof logos[x.logo] === 'string') kept[x.logo] = logos[x.logo];
+  }
+  if (Object.keys(kept).length) file.logos = kept; // a file from a version without logos simply has no such key
   return file;
 }
 
@@ -58,7 +69,8 @@ export function missingSecrets(settings, emptied = [], { onlyInputIds = null } =
 
 // raw: the text or the parsed object of the file. current: the plain settings now in use.
 // mode: 'replace' (settings and inputs from the file) | 'add' (only inputs this PC does not have).
-// Returns { ok, settings, missing, added } or { ok:false, error }.
+// Returns { ok, settings, missing, added, logos } or { ok:false, error }. logos: { logoId: PNG data URL } of the logos in the
+// file that the inputs taken from it use (each one checked again: a bad one is left out).
 export function prepareImport(raw, current, { mode = 'replace' } = {}) {
   let file = raw;
   if (typeof raw === 'string') {
@@ -84,6 +96,8 @@ export function prepareImport(raw, current, { mode = 'replace' } = {}) {
   }
   for (const k of RUNTIME_KEYS) delete fromFile[k];
   const incoming = sanitizeSettings(fromFile);
+  // a file of 0.2.1 keys its logos by input and has no `logo` in the inputs: the logo is named after the input
+  if (isObj(file.logos)) for (const i of incoming.inputs) if (!i.logo && typeof file.logos[i.id] === 'string') i.logo = i.id;
 
   // a secret the file does not carry is kept from this PC, only for the same server and user
   const e = incoming.notifications.email;
@@ -102,15 +116,33 @@ export function prepareImport(raw, current, { mode = 'replace' } = {}) {
 
   let result;
   let addedIds = null;
+  let addedStationIds = null;
   if (mode === 'add') {
     const have = new Set(current.inputs.map((i) => i.id));
     const extra = incoming.inputs.filter((i) => !have.has(i.id)).slice(0, Math.max(0, MAX_INPUTS - current.inputs.length));
-    result = sanitizeSettings({ ...structuredClone(current), inputs: [...structuredClone(current.inputs), ...extra] });
+    // the stations the added streams belong to come with them (unless this PC already has a station with that id)
+    const haveStations = new Set((current.stations || []).map((st) => st.id));
+    const extraStations = (incoming.stations || []).filter((st) => !haveStations.has(st.id) && extra.some((i) => i.stationId === st.id));
+    result = sanitizeSettings({ ...structuredClone(current), stations: [...structuredClone(current.stations || []), ...extraStations], inputs: [...structuredClone(current.inputs), ...extra] });
     addedIds = new Set(extra.map((i) => i.id).filter((id) => result.inputs.some((r) => r.id === id)));
+    addedStationIds = new Set(extraStations.map((st) => st.id));
   } else {
     result = incoming;
     for (const k of RUNTIME_KEYS) result[k] = current[k];
   }
   const missing = mode === 'add' ? missingSecrets(result, [...emptied], { onlyInputIds: addedIds }) .filter((m) => m.kind === 'input') : missingSecrets(result, [...emptied]);
-  return { ok: true, settings: result, missing, added: addedIds ? addedIds.size : null, mode };
+  const taken = new Set([...result.inputs.filter((i) => !addedIds || addedIds.has(i.id)), ...result.stations.filter((st) => !addedStationIds || addedStationIds.has(st.id))].map((x) => x.logo).filter(Boolean));
+  const logos = {};
+  if (isObj(file.logos)) {
+    for (const [id, url] of Object.entries(file.logos)) {
+      if (!taken.has(id)) continue;
+      try {
+        decodeLogo(url);
+        logos[id] = url;
+      } catch {
+        /* a damaged or oversized picture is left out, the rest of the file is still imported */
+      }
+    }
+  }
+  return { ok: true, settings: result, missing, added: addedIds ? addedIds.size : null, mode, logos };
 }
