@@ -437,6 +437,7 @@ function updateInputTile(inp, tile, logoId, station, grouped) {
   else if (inp.state === 'counting') sub = t(inp.type === 'snmp' ? 'st.sub.snmpCounting' : 'st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
   else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
   else if (inp.state === 'ok') sub = inp.type === 'snmp' ? t('st.sub.snmpOk', { value: inp.snmpValue ?? '?' }) : t('meter.threshold', { db: inp.thresholdDb });
+  if (inp.type === 'snmp' && inp.snmpValue != null && (inp.state === 'counting' || inp.state === 'alarm')) sub += ` · ${t('st.sub.snmpValue', { value: inp.snmpValue })}`; // what the device says, to set the normal values
   tile.sub.textContent = sub;
   tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
   renderTileNowPlaying(tile, inp);
