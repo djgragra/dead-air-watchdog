@@ -10,6 +10,7 @@ import { viewItems, logoIdFor, PALETTE } from '../src/core/stations.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 import { hasTransparentEdge } from '../src/core/logo-alpha.js';
 import { findCommonProblems } from '../src/core/report.js';
+import { parseSnmpAddress, buildSnmpAddress, isValidOid, parseNormal, DEFAULT_PORT as SNMP_PORT } from '../src/core/snmp-address.js';
 
 const api = window.api;
 const $ = (id) => document.getElementById(id);
@@ -18,6 +19,8 @@ const SVG = 'http://www.w3.org/2000/svg';
 const METER_MIN = -80;
 const METER_MAX = 0;
 const MAX_INPUTS = 32;
+const SNMP_FAULTS = ['timeout', 'no-such-object', 'not-a-number']; // what the SNMP watcher reports when a poll fails (src/snmp.js)
+const DEVA_OID = '1.3.6.1.4.1.35833.1.3.1.0'; // audioInput of the DEVA DB8000 (its MIB)
 const FAULTS = ['device-ended', 'stream-error', 'stream-ended', 'stream-stalled', 'stream-nostart', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
 
 let settings = null;
@@ -156,10 +159,11 @@ function tickClock() {
 }
 
 // ---- status: overall light, tiles, edge glow ------------------------------------------------
-const usable = (i) => i.enabled && (i.type === 'device' ? settings.micExplained : /^https?:\/\//i.test(i.streamUrl));
+const usable = (i) => i.enabled && (i.type === 'device' ? settings.micExplained : i.type === 'snmp' ? !!parseSnmpAddress(i.streamUrl) && !!i.snmpOid : /^https?:\/\//i.test(i.streamUrl));
 const configured = () => !!settings && settings.inputs.some(usable);
 
 function faultText(reason) {
+  if (SNMP_FAULTS.includes(reason)) return t(`fault.snmp-${reason}`);
   return FAULTS.includes(reason) ? t(`fault.${reason}`) : t('fault.other', { reason });
 }
 
@@ -418,9 +422,10 @@ function updateInputTile(inp, tile, logoId, station, grouped) {
   setTileLogo(tile, logos[logoId] || '');
   const devName = inp.type === 'device' ? settings.inputs.find((i) => i.id === inp.id)?.deviceLabel : '';
   const quiet = inp.alerts === 'off' ? ` · ${t('tile.alertsOff')}` : inp.alerts === 'indicator' ? ` · ${t('tile.indicator')}` : '';
-  tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : 'tile.stream') + quiet;
+  tile.type.textContent = t(inp.type === 'device' ? 'tile.device' : inp.type === 'snmp' ? 'tile.snmp' : 'tile.stream') + quiet;
+  tile.root.classList.toggle('tile--snmp', inp.type === 'snmp'); // a device has no level: no meters, its value instead
   tile.type.title = devName || ''; // the device name is a tooltip: a long name in the line pushed the name of the input out of the tile
-  tile.state.textContent = t(`st.${inp.state}`);
+  tile.state.textContent = t(inp.type === 'snmp' && ['ok', 'counting', 'alarm'].includes(inp.state) ? `st.snmp.${inp.state}` : `st.${inp.state}`);
   const paused = inp.state === 'paused';
   tile.pause.title = t('pause.btn');
   tile.pause.setAttribute('aria-label', t('pause.btn'));
@@ -429,9 +434,9 @@ function updateInputTile(inp, tile, logoId, station, grouped) {
   let sub = '';
   if (paused && inp.scheduled) sub = t('st.sub.scheduled', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
   else if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
-  else if (inp.state === 'counting') sub = t('st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
+  else if (inp.state === 'counting') sub = t(inp.type === 'snmp' ? 'st.sub.snmpCounting' : 'st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
   else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
-  else if (inp.state === 'ok') sub = t('meter.threshold', { db: inp.thresholdDb });
+  else if (inp.state === 'ok') sub = inp.type === 'snmp' ? t('st.sub.snmpOk', { value: inp.snmpValue ?? '?' }) : t('meter.threshold', { db: inp.thresholdDb });
   tile.sub.textContent = sub;
   tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
   renderTileNowPlaying(tile, inp);
@@ -833,7 +838,7 @@ async function refreshStats() {
 }
 
 function inputName(i) {
-  return i.name || (i.type === 'stream' ? hostOf(i.streamUrl) || t('set.in.newStream') : i.deviceLabel || t('set.in.sound'));
+  return i.name || (i.type === 'stream' ? hostOf(i.streamUrl) || t('set.in.newStream') : i.type === 'snmp' ? parseSnmpAddress(i.streamUrl)?.host || t('set.in.newSnmp') : i.deviceLabel || t('set.in.sound'));
 }
 
 function fillInputSelect(sel, current) {
@@ -1119,6 +1124,7 @@ function inputTitle(card) {
   const name = card.querySelector('.in-name').value.trim();
   if (name) return name;
   if (card.dataset.type === 'stream') return hostOf(card.querySelector('.in-url').value) || t('set.in.newStream');
+  if (card.dataset.type === 'snmp') return card.querySelector('.in-snmp-host').value.trim() || t('set.in.newSnmp');
   const sel = card.querySelector('.in-device');
   return sel.value ? optionName(sel.selectedOptions[0]) || t('set.in.sound') : t('set.in.sound');
 }
@@ -1339,6 +1345,7 @@ function buildAdvanced(inp) {
   npField.append(npLabel, tel('p', 'hint', 'adv.np.hint'));
   npField.classList.toggle('hidden', inp.type !== 'stream');
 
+  for (const f of [yField, mField, npField, fField]) f.classList.add('audio-only'); // nothing of these for a device: only the monitoring hours remain
   body.append(yField, mField, npField, fField, sField);
   box.appendChild(body);
   return box;
@@ -1386,6 +1393,7 @@ function buildInputCard(inp, open) {
   const card = el('details', 'input');
   card.dataset.id = inp.id;
   card.dataset.type = inp.type;
+  card.classList.toggle('input--snmp', inp.type === 'snmp');
   card._logoId = inp.logo || ''; // the logo of the library this input uses ('' = none); a new picture is added on save (card._logo)
   card.open = open;
   const summary = el('summary');
@@ -1406,7 +1414,7 @@ function buildInputCard(inp, open) {
   const live = el('span', 'input__live');
   live.dataset.live = inp.id;
   live.title = t('set.live.tip');
-  summary.append(grip, sumLogo, title, live, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : 'tile.stream'), move);
+  summary.append(grip, sumLogo, title, live, tel('span', 'input__kind', inp.type === 'device' ? 'tile.device' : inp.type === 'snmp' ? 'tile.snmp' : 'tile.stream'), move);
   const body = el('div', 'input__body');
 
   const enabled = el('input', 'in-enabled');
@@ -1429,7 +1437,7 @@ function buildInputCard(inp, open) {
   name.placeholder = t('set.in.nameHint');
   // what the input says when it fails: everything (as always), nothing outside the window (without alerts), or only AUDIO YES / NO
   const alertsSel = el('select', 'in-alerts');
-  for (const [v, key] of [['on', 'set.in.alerts.on'], ['off', 'set.in.alerts.off'], ['indicator', 'set.in.alerts.indicator']]) alertsSel.append(new Option(t(key), v));
+  for (const [v, key] of [['on', 'set.in.alerts.on'], ['off', 'set.in.alerts.off'], ['indicator', 'set.in.alerts.indicator']]) if (v !== 'indicator' || inp.type !== 'snmp') alertsSel.append(new Option(t(key), v));
   alertsSel.value = inp.alerts || 'on';
   const countsBox = el('input', 'in-ind-counts');
   countsBox.type = 'checkbox';
@@ -1441,7 +1449,45 @@ function buildInputCard(inp, open) {
 
   body.appendChild(buildLogoField());
 
-  if (inp.type === 'stream') {
+  if (inp.type === 'snmp') {
+    const addr = parseSnmpAddress(inp.streamUrl) || { host: '', port: SNMP_PORT, community: '' };
+    const preset = el('select', 'in-snmp-preset');
+    for (const [v, key] of [['custom', 'set.snmp.preset.custom'], ['deva', 'set.snmp.preset.deva']]) {
+      const o = new Option(t(key), v);
+      o.dataset.i18n = key;
+      preset.appendChild(o);
+    }
+    preset.value = inp.snmpOid === DEVA_OID ? 'deva' : 'custom';
+    const host = el('input', 'in-snmp-host');
+    host.type = 'text';
+    host.value = addr.host;
+    host.spellcheck = false;
+    host.placeholder = '192.168.1.50';
+    const port = numberInput('in-snmp-port', 1, 65535, addr.port);
+    const hostRow = el('span', 'row');
+    hostRow.append(host, tel('span', 'hint', 'set.snmp.port'), port);
+    const comm = el('input', 'in-snmp-community');
+    comm.type = 'password';
+    comm.value = addr.community;
+    comm.spellcheck = false;
+    comm.autocomplete = 'off';
+    const oid = el('input', 'in-snmp-oid');
+    oid.type = 'text';
+    oid.value = inp.snmpOid || '';
+    oid.spellcheck = false;
+    oid.placeholder = DEVA_OID;
+    const normal = el('input', 'in-snmp-normal');
+    normal.type = 'text';
+    normal.value = inp.snmpNormal || '1';
+    normal.spellcheck = false;
+    const poll = numberInput('in-snmp-poll', 1, 600, inp.snmpPollSec || 5);
+    const pollRow = el('span', 'row');
+    pollRow.append(poll, tel('span', 'hint', 'adv.sec'));
+    const devaHint = tel('p', 'hint in-snmp-devahint', 'set.snmp.hint.deva');
+    devaHint.classList.toggle('hidden', preset.value !== 'deva');
+    body.append(labelled('set.snmp.preset', preset), labelled('set.snmp.host', hostRow), labelled('set.snmp.community', comm), labelled('set.snmp.oid', oid), labelled('set.snmp.normal', normal), devaHint, labelled('set.snmp.poll', pollRow), tel('p', 'hint', 'set.snmp.hint'), tel('p', 'warn hidden in-bad', 'set.snmp.bad'));
+    addEye(comm);
+  } else if (inp.type === 'stream') {
     const url = el('input', 'in-url');
     url.type = 'url';
     url.value = inp.streamUrl;
@@ -1486,6 +1532,7 @@ function buildInputCard(inp, open) {
   thrRow.append(range, thr);
   const thrField = el('div', 'field');
   thrField.append(tel('span', '', 'set.det.threshold'), thrRow);
+  thrField.classList.add('audio-only'); // a device has no level
 
   const min = numberInput('in-min', 1, 3600, inp.minSilenceSec);
   const chips = el('span', 'chips');
@@ -1534,6 +1581,7 @@ function updateInputsFooter() {
   const cards = flowCards();
   $('addStream').disabled = cards.length >= MAX_INPUTS;
   $('addDevice').disabled = cards.length >= MAX_INPUTS;
+  $('addSnmp').disabled = cards.length >= MAX_INPUTS;
   $('inputsMax').textContent = t('set.inputs.max', { n: MAX_INPUTS });
   $('inputsEmpty').classList.toggle('hidden', cards.length > 0);
   for (const c of cards) { // up and down move a card inside its own list (a station or the free ones)
@@ -1697,7 +1745,7 @@ function renderInputsList() {
 }
 
 function addInput(type, extra = {}) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', logo: '', channelPair: 0, channelMono: 0, streamUrl: '', thresholdDb: -50, minSilenceSec: 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', logo: '', channelPair: 0, channelMono: 0, streamUrl: '', snmpOid: '', snmpNormal: '1', snmpPollSec: 5, thresholdDb: -50, minSilenceSec: type === 'snmp' ? 10 : 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
   const card = buildInputCard({ ...base, ...extra }, true);
   const home = extra.stationId ? document.querySelector(`#stationsList .station-card[data-id="${CSS.escape(extra.stationId)}"] .st-streams`) : null;
   (home || $('inputsList')).appendChild(card);
@@ -1705,7 +1753,7 @@ function addInput(type, extra = {}) {
   updateInputsFooter();
   refreshStationCards();
   setDirty(true);
-  card.querySelector(type === 'stream' ? '.in-url' : '.in-name').focus();
+  card.querySelector(type === 'stream' ? '.in-url' : type === 'snmp' ? '.in-snmp-host' : '.in-name').focus();
 }
 
 function readInputs() {
@@ -1718,7 +1766,8 @@ function readInputs() {
       type,
       name: card.querySelector('.in-name').value.trim(),
       enabled: card.querySelector('.in-enabled').checked,
-      streamUrl: type === 'stream' ? card.querySelector('.in-url').value.trim() : '',
+      streamUrl: type === 'stream' ? card.querySelector('.in-url').value.trim() : type === 'snmp' ? buildSnmpAddress({ host: card.querySelector('.in-snmp-host').value.trim(), port: Number(card.querySelector('.in-snmp-port').value) || SNMP_PORT, community: card.querySelector('.in-snmp-community').value }) : '',
+      ...(type === 'snmp' ? { snmpOid: card.querySelector('.in-snmp-oid').value.trim(), snmpNormal: card.querySelector('.in-snmp-normal').value.trim(), snmpPollSec: Number(card.querySelector('.in-snmp-poll').value) || 5 } : {}),
       deviceId,
       deviceLabel: deviceId ? optionName(sel.selectedOptions[0]) : '',
       logo: card._logoId || '',
@@ -1755,6 +1804,13 @@ function onInputsEvent(e) {
     markInvalid(tg, false);
     card.classList.remove('has-error');
     card.querySelector('.in-bad')?.classList.add('hidden');
+  }
+  if (tg.classList.contains('in-snmp-preset')) { // the DEVA DB8000: its OID and its usual normal value are filled in
+    if (tg.value === 'deva') {
+      card.querySelector('.in-snmp-oid').value = DEVA_OID;
+      card.querySelector('.in-snmp-normal').value = '1';
+    }
+    card.querySelector('.in-snmp-devahint').classList.toggle('hidden', tg.value !== 'deva');
   }
   if (tg.classList.contains('in-frozen-on')) card.querySelector('.adv__frozen').classList.toggle('hidden', !tg.checked);
   if (tg.classList.contains('in-sched-on')) card.querySelector('.sched__box').classList.toggle('hidden', !tg.checked);
@@ -1970,12 +2026,26 @@ function addRecipientRow(r = { chatId: '', note: '' }) {
   $('tRecipients').appendChild(row);
 }
 
+// Where the trap listener is (SNMP inputs): listening on a port, off, or the reason it cannot listen.
+async function refreshTrapState() {
+  let st = { state: 'off' };
+  try {
+    st = (await api.monitor.snmpTrapState()) || st;
+  } catch {
+    /* the main process answers or the text says "not listening" */
+  }
+  $('sTrapState').textContent = st.state === 'listening' ? t('set.snmp.trap.listening', { port: st.port }) : st.state === 'error' ? t('set.snmp.trap.error', { message: st.message || st.code || '' }) : t('set.snmp.trap.off');
+}
+
 function fillForm() {
   if (!settings) return;
   const s = settings;
   renderStationsList();
   renderInputsList();
   refreshStationCards();
+  $('sTraps').checked = s.snmp.traps;
+  $('sTrapPort').value = s.snmp.trapPort;
+  refreshTrapState();
   $('nDesktop').checked = s.notifications.desktop;
   $('nReminder').value = s.notifications.reminderMin;
   $('nSound').checked = s.notifications.sound.enabled;
@@ -2076,6 +2146,7 @@ function readForm() {
       templates: tplDraft,
       grouping: { enabled: $('grEnable').checked, windowSec: Number($('grWindow').value) || 60, firstNow: $('grFirst').checked }
     },
+    snmp: { traps: $('sTraps').checked, trapPort: Number($('sTrapPort').value) || 1162 },
     installationName: $('gInst').value.trim(),
     heartbeat: { enabled: $('hEnable').checked, url: $('hUrl').value.trim(), intervalMin: Number($('hMin').value) || 5 },
     display: { edgeGlow: $('dGlow').value, startInWall: $('dWall').checked, wallNameSize: $('dName').value, wallLogo: $('dLogo').value, wallLogoOpacity: (Number($('dLogoOp').value) || 20) / 100, wallClock: $('dClock').value },
@@ -2107,9 +2178,9 @@ async function saveForm(e) {
   let bad = false;
   for (const card of flowCards()) {
     const inp = patch.inputs.find((i) => i.id === card.dataset.id);
-    const invalid = inp.type === 'stream' && inp.enabled && !validUrl(inp.streamUrl);
+    const invalid = inp.enabled && (inp.type === 'stream' ? !validUrl(inp.streamUrl) : inp.type === 'snmp' ? !parseSnmpAddress(inp.streamUrl) || !isValidOid(inp.snmpOid) || !parseNormal(inp.snmpNormal) : false);
     card.querySelector('.in-bad')?.classList.toggle('hidden', !invalid);
-    markInvalid(card.querySelector('.in-url'), invalid); // the field itself turns red, not only the text under it
+    markInvalid(card.querySelector('.in-url') || card.querySelector('.in-snmp-host'), invalid); // the field itself turns red, not only the text under it
     card.classList.toggle('has-error', invalid);
     if (invalid) {
       card.open = true;
@@ -2733,6 +2804,7 @@ function wire() {
   $('stationsList').addEventListener('click', onInputsClick);
   $('addStation').addEventListener('click', addStation);
   $('addStream').addEventListener('click', () => addInput('stream'));
+  $('addSnmp').addEventListener('click', () => addInput('snmp'));
   $('addDevice').addEventListener('click', () => {
     addInput('device');
     if (settings.micExplained) loadDevices();

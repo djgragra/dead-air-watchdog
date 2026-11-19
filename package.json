@@ -1,7 +1,7 @@
 {
   "name": "dead-air-watchdog",
   "productName": "Dead Air Watchdog",
-  "version": "26.11.4",
+  "version": "26.11.5",
   "description": "Monitors sound cards and Icecast/Shoutcast streams with a native audio engine and alerts by email and Telegram when they stay silent",
   "main": "main.js",
   "type": "module",
@@ -22,6 +22,7 @@
     "engine": "cargo build --release --manifest-path engine/Cargo.toml"
   },
   "dependencies": {
+    "net-snmp": "^3.29.3",
     "nodemailer": "^10.6.0"
   },
   "devDependencies": {
