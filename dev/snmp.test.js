@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import dgram from 'node:dgram';
 import netSnmp from 'net-snmp';
-import { parseSnmpAddress, buildSnmpAddress, parseNormal, isValidOid, createSnmpWatcher } from '../src/snmp.js';
+import { parseSnmpAddress, buildSnmpAddress, parseNormal, isValidOid, createSnmpWatcher, fixEmptyCommunity } from '../src/snmp.js';
 
 const OID = '1.3.6.1.4.1.35833.1.3.1'; // audioInput of the DEVA DB8000
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -155,6 +155,85 @@ test('the trap port already in use is reported, the polling goes on', async () =
   } finally {
     w.stop();
     taken.close();
+    dev.close();
+  }
+});
+
+// What the DEVA DB8000 does: its reply carries an empty community. This relay sits between the watcher and a good device and blanks it.
+const blankCommunity = (buf) => {
+  let p = 1;
+  let len = buf[p++];
+  if (len & 0x80) { const n = len & 0x7f; len = 0; for (let i = 0; i < n; i++) len = (len << 8) | buf[p++]; }
+  const ver = buf.subarray(p, p + 3);
+  p += 3;
+  const clen = buf[p + 1];
+  const rest = buf.subarray(p + 2 + clen);
+  const body = Buffer.concat([ver, Buffer.from([0x04, 0x00]), rest]);
+  return Buffer.concat([Buffer.from([0x30, body.length]), body]);
+};
+async function quirkyRelay(devicePort) {
+  const port = await freePort();
+  const sock = dgram.createSocket('udp4');
+  const up = dgram.createSocket('udp4');
+  let client = null;
+  sock.on('message', (m, r) => { client = r; up.send(m, devicePort, '127.0.0.1'); });
+  up.on('message', (m) => sock.send(blankCommunity(m), client.port, client.address));
+  await new Promise((r) => sock.bind(port, '127.0.0.1', r));
+  return { port, close: () => { sock.close(); up.close(); } };
+}
+
+test('fixEmptyCommunity: only an empty community of a reply is put back; anything else is left as it is', () => {
+  const pdu = Buffer.from('a20b020101020100020100' + '3000', 'hex');
+  const good = Buffer.concat([Buffer.from([0x30, 0x19, 0x02, 0x01, 0x01, 0x04, 0x07]), Buffer.from('DEVA800'), pdu]);
+  assert.deepEqual(fixEmptyCommunity(good, 'DEVA800'), good); // a community there: untouched
+  const blank = blankCommunity(good);
+  assert.notDeepEqual(blank, good);
+  assert.deepEqual(fixEmptyCommunity(blank, 'DEVA800'), good); // empty: the one of the request comes back
+  assert.deepEqual(fixEmptyCommunity(blank, ''), blank); // a request without community: nothing to put back
+  const junk = Buffer.from('00112233445566778899', 'hex');
+  assert.deepEqual(fixEmptyCommunity(junk, 'x'), junk);
+});
+
+test('a device that answers with an empty community (the DEVA DB8000) is still read', async () => {
+  const dev = await fakeDevice();
+  dev.state.value = 2;
+  const relay = await quirkyRelay(dev.port);
+  const got = [];
+  const w = createSnmpWatcher({ onResult: (id, r) => got.push(r) });
+  try {
+    w.sync([{ id: 'a', address: `snmp://DEVA8000@127.0.0.1:${relay.port}`, oid: `${OID}.0`, pollSec: 5 }]);
+    assert.ok(await until(() => got.length >= 1, 5000));
+    assert.equal(got[0].error, undefined, JSON.stringify(got[0]));
+    assert.equal(got[0].value, 2);
+  } finally {
+    w.stop();
+    relay.close();
+    dev.close();
+  }
+});
+
+test('a trap that carries no community is taken too (from the address of the device)', async () => {
+  const dev = await fakeDevice();
+  const trapPort = await freePort();
+  const traps = [];
+  const w = createSnmpWatcher({ onResult: () => {}, onTrap: (id, v) => traps.push([id, v]) });
+  try {
+    w.sync([{ id: 'a', address: `snmp://DEVA8000@127.0.0.1:${dev.port}`, oid: `${OID}.0`, pollSec: 60 }]);
+    w.setTraps({ enabled: true, port: trapPort });
+    // the client library cannot send an empty community (it makes it "public"): a small relay blanks it on the way
+    const relayPort = await freePort();
+    const relay = dgram.createSocket('udp4');
+    relay.on('message', (m) => relay.send(blankCommunity(m), trapPort, '127.0.0.1'));
+    await new Promise((r) => relay.bind(relayPort, '127.0.0.1', r));
+    await new Promise((resolve) => {
+      const s = netSnmp.createSession('127.0.0.1', 'public', { port: relayPort, trapPort: relayPort, version: netSnmp.Version2c });
+      s.trap('1.3.6.1.4.1.35833.1.100.0.1', [{ oid: `${OID}.0`, type: netSnmp.ObjectType.Integer, value: 4 }], { upTime: 1 }, () => { s.close(); resolve(); });
+    });
+    assert.ok(await until(() => traps.length === 1));
+    assert.deepEqual(traps[0], ['a', 4]);
+    relay.close();
+  } finally {
+    w.stop();
     dev.close();
   }
 });

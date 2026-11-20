@@ -3,12 +3,53 @@
 // also takes the traps the device sends (a trap makes the next poll happen at once). It never writes to a device.
 // The monitor turns the value into a state: the value is "normal" or it is not; no answer is "offline".
 // Only SNMP v1/v2c (a community, sent in clear on the network: use it on a LAN or a VPN, never over the open internet).
+import dgram from 'node:dgram';
 import netSnmp from 'net-snmp';
 import { DEFAULT_PORT, DEFAULT_TRAP_PORT, parseSnmpAddress, buildSnmpAddress, isValidOid, cleanOid, parseNormal } from './core/snmp-address.js';
 
 export { DEFAULT_PORT, DEFAULT_TRAP_PORT, parseSnmpAddress, buildSnmpAddress, isValidOid, cleanOid, parseNormal };
 
 const TIMEOUT_MS = 3000;
+
+// Some devices (the DEVA DB8000 among them) answer an SNMP v2c request with an EMPTY community string in the reply. The library
+// refuses such a reply ("Community 'x' in request does not match community '' in response"), and the input would be offline
+// for ever. The empty community of a reply is put back to the one of the request before the library sees it. Only an empty one
+// is changed (a reply with another community is still refused), and only the reply of a request we sent ourselves.
+const berLen = (n) => (n < 0x80 ? Buffer.from([n]) : n < 0x100 ? Buffer.from([0x81, n]) : Buffer.from([0x82, n >> 8, n & 0xff]));
+export function fixEmptyCommunity(buf, community) {
+  try {
+    if (!community || buf.length < 8 || buf[0] !== 0x30) return buf;
+    let p = 1;
+    let len = buf[p++];
+    if (len & 0x80) {
+      const n = len & 0x7f;
+      if (n < 1 || n > 2) return buf;
+      len = 0;
+      for (let i = 0; i < n; i++) len = (len << 8) | buf[p++];
+    }
+    if (p + len !== buf.length) return buf;
+    if (buf[p] !== 0x02 || buf[p + 1] !== 0x01) return buf; // version
+    const ver = buf.subarray(p, p + 3);
+    p += 3;
+    if (buf[p] !== 0x04 || buf[p + 1] !== 0x00) return buf; // community present and not empty: nothing to do
+    const rest = buf.subarray(p + 2);
+    const c = Buffer.from(community, 'utf8');
+    const body = Buffer.concat([ver, Buffer.from([0x04]), berLen(c.length), c, rest]);
+    return Buffer.concat([Buffer.from([0x30]), berLen(body.length), body]);
+  } catch {
+    return buf;
+  }
+}
+
+// A dgram module for the library: the same sockets, with the replies passed through fixEmptyCommunity.
+const quirkDgram = (community) => ({
+  createSocket(type) {
+    const sock = dgram.createSocket(type);
+    const on = sock.on.bind(sock);
+    sock.on = (ev, fn) => (ev === 'message' ? on(ev, (b, r) => fn(fixEmptyCommunity(b, community), r)) : on(ev, fn));
+    return sock;
+  }
+});
 
 // The value of a varbind as a number (INTEGER, Gauge, Counter ...) or null (text, NULL, error).
 export function numericValue(vb) {
@@ -42,7 +83,7 @@ export function createSnmpWatcher({ lib = netSnmp, onResult, onTrap = () => {}, 
     const a = parseSnmpAddress(cfg.address);
     if (!a || !isValidOid(cfg.oid)) return null;
     // v2c, no retries: the poll interval is the retry
-    const session = lib.createSession(a.host, a.community, { port: a.port, version: lib.Version2c, timeout: TIMEOUT_MS, retries: 0, transport: a.host.includes(':') ? 'udp6' : 'udp4' });
+    const session = lib.createSession(a.host, a.community, { port: a.port, version: lib.Version2c, timeout: TIMEOUT_MS, retries: 0, transport: a.host.includes(':') ? 'udp6' : 'udp4', dgramModule: quirkDgram(a.community) });
     session.on('error', (err) => log(`SNMP ${a.host}: ${err.message}`, 'warn'));
     return { a, session };
   }
@@ -106,7 +147,7 @@ export function createSnmpWatcher({ lib = netSnmp, onResult, onTrap = () => {}, 
       return;
     }
     try {
-      receiver = lib.createReceiver({ port: trapWanted.port, transport: 'udp4', disableAuthorization: false, includeAuthentication: false }, (err, n) => {
+      receiver = lib.createReceiver({ port: trapWanted.port, transport: 'udp4', disableAuthorization: true, includeAuthentication: true }, (err, n) => {
         if (err) {
           // the receiver hands over errors of its socket (port in use, no rights for the port) in the same callback
           if (trapState.state !== 'error') {
@@ -119,6 +160,9 @@ export function createSnmpWatcher({ lib = netSnmp, onResult, onTrap = () => {}, 
         const from = n.rinfo?.address;
         for (const p of probes.values()) {
           if (p.a.host !== from) continue; // a trap counts only from the device we watch (by its address)
+          // and with its community, or with none: some devices (the DEVA DB8000) leave it empty (the library refuses an empty one itself, so it checks nothing here)
+          const comm = n.pdu?.community ?? '';
+          if (comm !== '' && comm !== p.a.community) continue;
           const vb = (n.pdu?.varbinds || []).find((v) => sameOid(v.oid, p.cfg.oid));
           const value = vb ? numericValue(vb) : null;
           log(`SNMP trap from ${from}${value !== null ? `: value ${value}` : ''}`, 'info');
@@ -126,8 +170,6 @@ export function createSnmpWatcher({ lib = netSnmp, onResult, onTrap = () => {}, 
           poll(p.cfg.id); // the poll is the truth: asked at once
         }
       });
-      const auth = receiver.getAuthorizer();
-      for (const c of communities) auth.addCommunity(c);
       receiverKey = key;
       trapState = { state: 'listening', port: trapWanted.port };
     } catch (e) {
