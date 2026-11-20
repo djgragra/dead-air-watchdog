@@ -236,7 +236,14 @@
           <div class="row">
             <button type="button" class="btn btn--small btn--primary" id="addStream" data-i18n="set.inputs.addStream">Add stream</button>
             <button type="button" class="btn btn--small" id="addDevice" data-i18n="set.inputs.addDevice">Add sound card</button>
+            <button type="button" class="btn btn--small" id="addSnmp" data-i18n="set.inputs.addSnmp">Add SNMP device</button>
             <span class="hint" id="inputsMax"></span>
+          </div>
+          <div class="field" id="snmpSettings">
+            <label class="check"><input type="checkbox" id="sTraps"><span data-i18n="set.snmp.traps">Also listen for traps</span></label>
+            <label class="field"><span data-i18n="set.snmp.trapPort">Trap port (UDP)</span><input type="number" class="num" id="sTrapPort" min="1" max="65535" step="1" inputmode="numeric"></label>
+            <p class="hint" id="sTrapState"></p>
+            <p class="hint" data-i18n="set.snmp.trapHint"></p>
           </div>
           <p class="hint" data-i18n="set.det.thresholdHint"></p>
           <p class="hint" data-i18n="set.det.minHint"></p>

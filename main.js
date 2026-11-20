@@ -21,6 +21,7 @@ import { keepIds, adoptLegacy, mergeDuplicates } from './src/logo-refs.js';
 import { EngineSupervisor, findEngine, engineProblem } from './src/engine-client.js';
 import { createEngineBridge } from './src/engine-bridge.js';
 import { resolveDevice } from './src/devices.js';
+import { createSnmpWatcher } from './src/snmp.js';
 import { aggregateDeadAir } from './src/core/stats.js';
 import { buildReport, findCommonProblems, periodRange, reportToCsv } from './src/core/report.js';
 import { toCsv, toJson } from './src/core/export.js';
@@ -51,6 +52,7 @@ const faultList = () => [...deliveryFaults].map(([channel, f]) => ({ channel, ..
 let alertState;
 let heartbeat;
 let nowPlaying;
+let snmpWatcher = null;
 let logos;
 let wallBlockerId = null;
 let soundActive = false;
@@ -602,6 +604,7 @@ function registerIpc() {
   handle('monitor:stop', stopMonitoring);
   handle('monitor:status', () => ({ ...monitor.status(), soundPlaying: lastStatus?.soundPlaying ?? false }));
   handle('nowplaying:get', () => nowPlaying.get());
+  handle('snmp:trap-state', () => snmpWatcher?.trapState() ?? { state: 'off' });
 
   handle('logos:all', () => logos.all());
   // deletes a logo and takes it off the inputs that used it
@@ -892,9 +895,16 @@ app.whenReady().then(() => {
       sendUi('event:delivery', faultList());
     },
     log: (m, level) => clog(m, level, 'notify') });
+  // SNMP inputs: the watcher asks the devices (and takes their traps) and tells the monitor
+  snmpWatcher = createSnmpWatcher({
+    onResult: (id, r) => monitor?.onSnmp(id, r),
+    onTrap: (id, v) => monitor?.onSnmpTrap(id, v),
+    log: (m, level) => clog(m, level, 'snmp')
+  });
   monitor = createMonitor({
     store,
     engine,
+    snmp: snmpWatcher,
     dispatch: (msg) => dispatcher.dispatch(msg),
     publish: {
       status: (st) => pushStatus(st),
@@ -965,6 +975,7 @@ app.on('before-quit', () => {
     monitor?.stop(true);
     heartbeat?.stop();
     nowPlaying?.stop();
+    snmpWatcher?.stop();
     dispatcher?.cancelPending();
     engineBridge?.shutdown();
     store?.flush();

@@ -29,8 +29,10 @@ test('makeT falls back to English and fills placeholders', () => {
 test('keys built at run time exist in every language', () => {
   const keys = [
     ...['run-installer', 'open-image', 'reveal'].map((k) => `upd.after.${k}`),
-    ...['silence', 'offline', 'frozen', 'nodata', 'late', 'maintenance', 'quit', 'unknown', 'suspended'].map((k) => `cause.${k}`),
+    ...['silence', 'offline', 'frozen', 'nodata', 'late', 'maintenance', 'quit', 'unknown', 'suspended', 'snmp', 'unreachable'].map((k) => `cause.${k}`),
+    ...['timeout', 'no-such-object', 'not-a-number'].map((k) => `fault.snmp-${k}`),
     ...['idle', 'starting', 'ok', 'counting', 'alarm', 'paused', 'off', 'incomplete'].map((k) => `st.${k}`),
+    ...['ok', 'counting', 'alarm'].map((k) => `st.snmp.${k}`),
     ...['blip', 'pause', 'dead'].map((k) => `kind.${k}`)
   ];
   for (const l of ['en', 'it', 'es']) for (const k of keys) assert.ok(k in STRINGS[l], `${l} ${k}`);

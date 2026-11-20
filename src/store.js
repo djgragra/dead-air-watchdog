@@ -9,6 +9,7 @@ import { parseAddresses } from './addresses.js';
 import { TEMPLATE_KINDS, TEMPLATE_LIMITS } from './messages.js';
 import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 import { assignColors, isColor } from './core/stations.js';
+import { parseSnmpAddress, isValidOid, cleanOid, parseNormal, DEFAULT_TRAP_PORT } from './core/snmp-address.js';
 
 export const MAX_INPUTS = 32;
 export const MAX_STATIONS = 32;
@@ -23,14 +24,17 @@ export const compactHeightFor = (inputs) => 120 + 46 * Math.min(8, Math.max(1, i
 export const DEFAULT_INPUT = Object.freeze({
   id: '',
   name: '', // empty = derived from the stream host or the device name
-  type: 'stream', // 'stream' | 'device'
+  type: 'stream', // 'stream' | 'device' | 'snmp' (the state of a network device read with SNMP: src/snmp.js)
   deviceId: '', // device only; '' = system default input
   deviceLabel: '',
   stationId: '', // the station this stream belongs to ('' = none); see `stations` and src/core/stations.js
   logo: '', // id of the logo in the logo store (src/logos.js): several inputs can share one; '' = none
   channelPair: 0, // device only: 0 = channels 1-2, 1 = 3-4 … 7 = 15-16
   channelMono: 0, // device only: 0 = measure the pair above; 1-16 = measure that single channel (mono)
-  streamUrl: '',
+  streamUrl: '', // stream: its address. snmp: snmp://community@host:port (the community is a secret, handled like the credentials of a stream address)
+  snmpOid: '', // snmp only: the OID of the value to watch, for example 1.3.6.1.4.1.35833.1.3.1.0 (the input of a DEVA DB8000)
+  snmpNormal: '1', // snmp only: the values that mean "all well" (numbers, separated by commas); any other value is an alarm
+  snmpPollSec: 5, // snmp only: how often the device is asked
   thresholdDb: -50,
   minSilenceSec: 30,
   yellowDelaySec: 2, // the traffic light of the input stays green until the audio has been below the threshold this long (0 = at once)
@@ -48,6 +52,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   language: 'en', // 'en' | 'it' | 'es' — the app always starts in English until the user changes it
   theme: 'dark', // 'dark' | 'light' | 'auto'
   stations: [], // { id, name, logo, featured, color }: a station groups the streams of one radio; `featured` is the input shown when it is closed
+  snmp: { traps: true, trapPort: DEFAULT_TRAP_PORT }, // SNMP inputs: also listen for the traps the devices send (UDP port; below 1024 needs extra rights on Linux and macOS)
   inputs: [], // see DEFAULT_INPUT: any mix of sound cards (several, or several pairs of one) and streams, MAX_INPUTS in total
   installationName: '', // shown in alerts as [Dead Air Watchdog · name]; empty = the computer name
   display: {
@@ -125,7 +130,7 @@ function migrateLegacy(raw) {
 function sanitizeInput(raw, usedIds) {
   const d = DEFAULT_INPUT;
   const i = { ...d, ...(isObj(raw) ? raw : {}) };
-  i.type = i.type === 'device' ? 'device' : 'stream';
+  i.type = ['device', 'snmp'].includes(i.type) ? i.type : 'stream';
   let id = String(i.id || '');
   if (!/^[\w-]{1,64}$/.test(id) || usedIds.has(id)) id = randomUUID();
   usedIds.add(id);
@@ -147,6 +152,20 @@ function sanitizeInput(raw, usedIds) {
   i.alerts = ['on', 'off', 'indicator'].includes(i.alerts) ? i.alerts : 'on';
   i.indicatorCounts = i.alerts === 'indicator' && i.indicatorCounts === true;
   i.nowPlaying = i.type === 'stream' && i.nowPlaying === true;
+  i.snmpOid = i.type === 'snmp' && isValidOid(i.snmpOid) ? cleanOid(i.snmpOid) : '';
+  i.snmpNormal = i.type === 'snmp' && parseNormal(i.snmpNormal) ? parseNormal(i.snmpNormal).join(', ') : d.snmpNormal;
+  i.snmpPollSec = Math.round(clamp(i.snmpPollSec, 1, 600, d.snmpPollSec));
+  if (i.type === 'snmp') {
+    // an SNMP input has no audio: no yellow delay, no frozen audio, no micro-silences; only the time before the alarm counts
+    if (!parseSnmpAddress(i.streamUrl)) i.streamUrl = '';
+    i.yellowDelaySec = 0;
+    i.frozenSec = 0;
+    i.microSilences = 'off';
+    if (i.alerts === 'indicator') i.alerts = 'on'; // "audio yes / no" means nothing for a device
+    i.indicatorCounts = false;
+  } else if (i.type === 'stream' || i.type === 'device') {
+    if (/^snmp:/i.test(i.streamUrl)) i.streamUrl = '';
+  }
   i.schedule = sanitizeSchedule(i.schedule, { thresholdDb: i.thresholdDb, minSilenceSec: i.minSilenceSec });
   i.enabled = i.enabled !== false;
   return Object.fromEntries(Object.keys(d).map((k) => [k, i[k]]));
@@ -178,6 +197,8 @@ export function sanitizeSettings(s) {
   out.display.wallLogoOpacity = Math.round(clamp(out.display.wallLogoOpacity, 0.05, 0.5, d.display.wallLogoOpacity) * 100) / 100;
   if (!['max', 'large', 'normal'].includes(out.display.wallClock)) out.display.wallClock = d.display.wallClock;
   if (!['inputs', 'stations'].includes(out.display.view)) out.display.view = d.display.view;
+  const sn = isObj(out.snmp) ? out.snmp : {};
+  out.snmp = { traps: sn.traps !== false, trapPort: Math.round(clamp(sn.trapPort, 1, 65535, DEFAULT_TRAP_PORT)) };
   out.installationName = String(out.installationName || '').trim().slice(0, 60);
   const used = new Set();
   out.inputs = (Array.isArray(out.inputs) ? out.inputs : []).slice(0, MAX_INPUTS).map((raw) => sanitizeInput(raw, used));
