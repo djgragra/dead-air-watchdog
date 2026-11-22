@@ -9,7 +9,10 @@ use cpal::{Sample, SampleFormat, SupportedStreamConfig};
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// A device that opens but sends no frame at all for this long is reported as a fault (it would read as plain silence).
+const NODATA_MS: u64 = 3000;
 
 /// On Linux the ALSA host lists every plugin of every card (front, surround, hdmi, dmix, ...). Only the ones that
 /// make sense as an input for a person are shown: the system default, PulseAudio / PipeWire, and each card through its
@@ -90,7 +93,7 @@ fn choose_config(device: &cpal::Device, needed: usize) -> Result<SupportedStream
 }
 
 /// Opens the stream. The caller keeps it alive; `broken` turns true when the system reports an error on it.
-fn open(device_id: &str, start: usize, count: usize, acc: &Arc<Mutex<Acc>>, broken: &Arc<AtomicBool>, why: &Arc<Mutex<String>>) -> Result<cpal::Stream, Fail> {
+fn open(device_id: &str, start: usize, count: usize, acc: &Arc<Mutex<Acc>>, broken: &Arc<AtomicBool>, why: &Arc<Mutex<String>>) -> Result<(cpal::Stream, String), Fail> {
     let host = cpal::default_host();
     let device = find_device(&host, device_id)?;
     let count = count.clamp(1, 2);
@@ -124,7 +127,9 @@ fn open(device_id: &str, start: usize, count: usize, acc: &Arc<Mutex<Acc>>, brok
     }
     .map_err(|e| ("NotReadableError", format!("Cannot open the device (in use by another program?): {e}")))?;
     stream.play().map_err(|e| ("NotReadableError", format!("Cannot start the device: {e}")))?;
-    Ok(stream)
+    let name = device.description().map(|x| x.name().to_string()).unwrap_or_else(|_| device_id.to_string());
+    let info = format!("{name}: {} Hz, {} channel(s), {:?}", cfg.sample_rate(), channels, cfg.sample_format());
+    Ok((stream, info))
 }
 
 pub fn spawn(device_id: String, channel_start: usize, channel_count: usize, acc: Arc<Mutex<Acc>>, stop: Arc<AtomicBool>, rep: Reporter) {
@@ -133,12 +138,26 @@ pub fn spawn(device_id: String, channel_start: usize, channel_count: usize, acc:
         while !stop.load(Ordering::Relaxed) {
             let broken = Arc::new(AtomicBool::new(false));
             let why = Arc::new(Mutex::new(String::new()));
+            if let Ok(mut a) = acc.lock() {
+                a.last_data = None;
+            }
             match open(&device_id, channel_start, channel_count, &acc, &broken, &why) {
-                Ok(stream) => {
-                    rep.ok();
+                Ok((stream, info)) => {
+                    rep.info(format!("device opened ({info})"));
                     attempts = 0;
+                    let opened = Instant::now();
+                    let mut silent_fault = false;
                     while !stop.load(Ordering::Relaxed) && !broken.load(Ordering::Relaxed) {
                         std::thread::sleep(std::time::Duration::from_millis(100));
+                        // The device opened without error but the system delivers no audio at all (not even silence)
+                        let delivering = acc.lock().map(|a| a.last_data.is_some()).unwrap_or(true);
+                        if delivering {
+                            rep.ok(); // says something only if there was a fault
+                            silent_fault = false;
+                        } else if !silent_fault && opened.elapsed() > Duration::from_millis(NODATA_MS) {
+                            silent_fault = true;
+                            rep.fault("device-nodata", format!("The device opened but delivers no audio after {} s ({info})", NODATA_MS / 1000));
+                        }
                     }
                     drop(stream);
                     if stop.load(Ordering::Relaxed) {

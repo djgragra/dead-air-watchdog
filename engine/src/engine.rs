@@ -49,6 +49,10 @@ impl Reporter {
         drop(f);
         (self.emit)(json!({"event":"fault","id":self.id,"reason":reason,"detail":detail.into()}));
     }
+    /// A note for the log of the app (nothing is shown on the tile).
+    pub fn info(&self, detail: impl Into<String>) {
+        (self.emit)(json!({"event":"info","id":self.id,"detail":detail.into()}));
+    }
     /// Only says something when there was a fault.
     pub fn ok(&self) {
         let mut f = self.fault.lock().unwrap();

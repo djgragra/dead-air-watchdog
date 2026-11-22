@@ -3,6 +3,7 @@
 //   { event: 'levels', inputs: { <id>: { rms: [dB, dB], peak: [dB, dB] } } }   every 100 ms, only inputs that delivered audio
 //   { event: 'fault', id, reason, detail }    an input cannot deliver (device gone, stream down ...)
 //   { event: 'ok', id }                       it delivers again
+//   { event: 'info', id, detail }             a note for the log only (the device opened, with its format)
 export function routeEngineEvent(monitor, ev) {
   switch (ev?.event) {
     case 'levels': return monitor.onLevels(ev.inputs);

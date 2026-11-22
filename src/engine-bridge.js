@@ -38,6 +38,7 @@ export function createEngineBridge({ supervisor, getMonitor, getLabel = () => ''
     // what the engine says about an input is written to the log (the reason and its detail): without it a stream that drops
     // again and again could only be seen on the tile, and the detail (how long, how much was received) was lost
     if (ev?.event === 'fault') log(`${getName(ev.id) || ev.id}: ${ev.reason}${ev.detail ? ` (${ev.detail})` : ''}`, 'warn');
+    else if (ev?.event === 'info') log(`${getName(ev.id) || ev.id}: ${ev.detail}`, 'info');
     else if (ev?.event === 'ok') log(`${getName(ev.id) || ev.id}: audio is back`, 'info');
     const monitor = getMonitor();
     if (monitor) routeEngineEvent(monitor, ev);

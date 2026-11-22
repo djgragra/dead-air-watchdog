@@ -18,7 +18,7 @@ const SVG = 'http://www.w3.org/2000/svg';
 const METER_MIN = -80;
 const METER_MAX = 0;
 const MAX_INPUTS = 32;
-const FAULTS = ['device-ended', 'stream-error', 'stream-ended', 'stream-stalled', 'stream-nostart', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
+const FAULTS = ['device-ended', 'device-nodata', 'stream-error', 'stream-ended', 'stream-stalled', 'stream-nostart', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
 
 let settings = null;
 let status = { running: false, overall: 'idle', counts: {}, inputs: [] };
