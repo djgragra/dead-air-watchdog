@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import dgram from 'node:dgram';
 import netSnmp from 'net-snmp';
-import { parseSnmpAddress, buildSnmpAddress, parseNormal, isValidOid, createSnmpWatcher, fixEmptyCommunity } from '../src/snmp.js';
+import { parseSnmpAddress, buildSnmpAddress, parseNormal, isValidOid, createSnmpWatcher, fixEmptyCommunity, parseLabels, formatLabels, valueText } from '../src/snmp.js';
 
 const OID = '1.3.6.1.4.1.35833.1.3.1'; // audioInput of the DEVA DB8000
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -236,4 +236,17 @@ test('a trap that carries no community is taken too (from the address of the dev
     w.stop();
     dev.close();
   }
+});
+
+test('names of the values: lenient reading, clean writing, "name (number)" for the tile and the alerts', () => {
+  assert.deepEqual([...parseLabels('1 = Main, 2 = Aux, 3 = MP3')], [[1, 'Main'], [2, 'Aux'], [3, 'MP3']]);
+  assert.equal(formatLabels('1=Main;2:  Aux ,x=bad, 3 = MP3 , 3 = again'), '1 = Main, 2 = Aux, 3 = MP3');
+  assert.equal(formatLabels(''), '');
+  assert.equal(formatLabels('no pairs here'), '');
+  assert.equal(parseLabels('1 = ' + 'x'.repeat(80)).get(1).length, 30);
+  assert.equal(parseLabels(Array.from({ length: 30 }, (_, i) => `${i} = n${i}`).join(',')).size, 16);
+  assert.equal(valueText(3, '1 = Main, 3 = MP3'), 'MP3 (3)');
+  assert.equal(valueText(2, '1 = Main, 3 = MP3'), '2');
+  assert.equal(valueText(2, ''), '2');
+  assert.equal(valueText(null, '1 = Main'), '');
 });

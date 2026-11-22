@@ -36,3 +36,23 @@ export function parseNormal(text) {
   const nums = parts.map((p) => (/^-?\d+$/.test(p) ? Number(p) : NaN));
   return nums.every(Number.isFinite) ? nums : null;
 }
+
+// Names of the values ("1 = Main, 2 = Aux, 3 = MP3"): what the device means by each number, shown on the tile and in the alerts.
+// Lenient: pairs that are not "number = name" are left out; at most 16, a name up to 30 characters.
+export function parseLabels(text) {
+  const out = new Map();
+  for (const part of String(text ?? '').split(/[,;\n]+/)) {
+    const m = /^\s*(-?\d+)\s*[=:]\s*(.+?)\s*$/.exec(part);
+    if (!m || out.size >= 16) continue;
+    const name = m[2].replace(/[=,;]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 30);
+    if (name && !out.has(Number(m[1]))) out.set(Number(m[1]), name);
+  }
+  return out;
+}
+export const formatLabels = (text) => [...parseLabels(text)].map(([v, n]) => `${v} = ${n}`).join(', ');
+// "MP3 (3)" when the value has a name, else "3"
+export function valueText(value, labels) {
+  if (value === null || value === undefined) return '';
+  const name = parseLabels(labels).get(value);
+  return name ? `${name} (${value})` : String(value);
+}

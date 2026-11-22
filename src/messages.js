@@ -279,7 +279,7 @@ export function buildAlert(lang, kind, d, templates) {
   const when = (ts) => formatDateTime(ts, lang);
   const vars = {
     input: d.input,
-    cause: t(lang, `cause.${d.cause || 'silence'}`) + (d.cause === 'snmp' && d.value != null ? ` [${d.value}]` : ''), // what an SNMP device reported
+    cause: t(lang, `cause.${d.cause || 'silence'}`) + (d.cause === 'snmp' && d.value ? ` [${d.value}]` : ''), // what an SNMP device reported
     start: when(d.start),
     end: d.end ? when(d.end) : '',
     now: when(d.now),

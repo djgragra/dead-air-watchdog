@@ -9,7 +9,7 @@ import { createGrouper } from './grouping.js';
 import { createFrozenDetector } from './core/frozen.js';
 import { activeRule, windowEnd } from './core/schedule.js';
 import { microSilencesOn } from './store.js';
-import { parseSnmpAddress, parseNormal } from './core/snmp-address.js';
+import { parseSnmpAddress, parseNormal, valueText } from './core/snmp-address.js';
 
 export const TICK_MS = 250;
 const STALE_MS = 1500; // no level report for this long = the input delivers nothing
@@ -92,7 +92,7 @@ export function createMonitor({ store, engine, snmp = { sync() {}, stop() {}, se
   function alertData(inp, extra) {
     const s = settings();
     const eff = chans.get(inp.id)?.eff || inp;
-    return { input: labelOf(inp), snmp: isSnmp(inp), value: chans.get(inp.id)?.snmp?.value, thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
+    return { input: labelOf(inp), snmp: isSnmp(inp), value: isSnmp(inp) ? valueText(chans.get(inp.id)?.snmp?.value, inp.snmpLabels) : undefined, thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
   }
 
   // Several inputs failing (or coming back) together go out as one message (src/grouping.js); a lone one is not delayed.
@@ -215,7 +215,7 @@ export function createMonitor({ store, engine, snmp = { sync() {}, stop() {}, se
       return { state: raw === 'starting' ? 'starting' : yes ? 'audio-yes' : 'audio-no', cause: null, fault: ch.fault, elapsedMs: 0, remainingMs: 0, silenceStart: null, thresholdDb: ch.eff.thresholdDb };
     }
     const state = raw === 'counting' && !snap.yellow ? 'ok' : raw;
-    return { state, cause: causeOf(inputById(ch.id), snap.cause), snmpValue: ch.snmp?.value ?? null, fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart, thresholdDb: ch.eff.thresholdDb };
+    return { state, cause: causeOf(inputById(ch.id), snap.cause), snmpValue: ch.snmp?.value ?? null, snmpText: ch.snmp ? valueText(ch.snmp.value, inputById(ch.id)?.snmpLabels) : '', fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart, thresholdDb: ch.eff.thresholdDb };
   }
 
   function status() {
@@ -251,7 +251,7 @@ export function createMonitor({ store, engine, snmp = { sync() {}, stop() {}, se
 
   function emitStatus(force = false) {
     const st = status();
-    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.alerts, i.indicatorCounts, i.state, i.fault, i.cause, i.snmpValue, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
+    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.alerts, i.indicatorCounts, i.state, i.fault, i.cause, i.snmpValue, i.snmpText, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
     if (force || key !== lastStatusKey) {
       lastStatusKey = key;
       publish.status(st);

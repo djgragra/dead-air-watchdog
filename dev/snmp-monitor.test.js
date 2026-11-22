@@ -160,3 +160,29 @@ test('the community is a secret: sealed at rest, left out of a backup, asked aga
   assert.ok(!JSON.stringify(settings).includes('DEVA8000'));
   assert.deepEqual(missingSecrets(settings, emptied).map((m) => m.id), ['input:d']);
 });
+
+test('names of the values: the tile gets the text and the alert says "MP3 (3)"', () => {
+  const { m, sent, advance, store } = setup([{ ...DEVA, snmpLabels: '1=Main, 2=Aux, 3=MP3' }]);
+  assert.equal(store.getSettings().inputs[0].snmpLabels, '1 = Main, 2 = Aux, 3 = MP3');
+  m.start();
+  advance(6000, 1);
+  assert.equal(m.status().inputs[0].snmpText, 'Main (1)');
+  advance(16_000, 3);
+  assert.equal(m.status().inputs[0].snmpText, 'MP3 (3)');
+  assert.equal(m.status().inputs[0].state, 'alarm');
+  assert.match(sent[0].text, /abnormal state \[MP3 \(3\)\]/);
+});
+
+test('without names the alert and the tile keep the number only', () => {
+  const { m, sent, advance } = setup();
+  m.start();
+  advance(16_000, 3);
+  assert.equal(m.status().inputs[0].snmpText, '3');
+  assert.match(sent[0].text, /abnormal state \[3\]/);
+});
+
+test('settings: the names are only kept for an SNMP input', () => {
+  const s = sanitizeSettings({ inputs: [{ ...DEVA, snmpLabels: '1=Main' }, { id: 's', type: 'stream', streamUrl: 'http://x.example/l', snmpLabels: '1=Main' }] });
+  assert.equal(s.inputs[0].snmpLabels, '1 = Main');
+  assert.equal(s.inputs[1].snmpLabels, '');
+});

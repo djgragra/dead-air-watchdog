@@ -9,7 +9,7 @@ import { parseAddresses } from './addresses.js';
 import { TEMPLATE_KINDS, TEMPLATE_LIMITS } from './messages.js';
 import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 import { assignColors, isColor } from './core/stations.js';
-import { parseSnmpAddress, isValidOid, cleanOid, parseNormal, DEFAULT_TRAP_PORT } from './core/snmp-address.js';
+import { parseSnmpAddress, isValidOid, cleanOid, parseNormal, formatLabels, DEFAULT_TRAP_PORT } from './core/snmp-address.js';
 
 export const MAX_INPUTS = 32;
 export const MAX_STATIONS = 32;
@@ -35,6 +35,7 @@ export const DEFAULT_INPUT = Object.freeze({
   snmpOid: '', // snmp only: the OID of the value to watch, for example 1.3.6.1.4.1.35833.1.3.1.0 (the input of a DEVA DB8000)
   snmpNormal: '1', // snmp only: the values that mean "all well" (numbers, separated by commas); any other value is an alarm
   snmpPollSec: 5, // snmp only: how often the device is asked
+  snmpLabels: '', // snmp only: names of the values, "1 = Main, 2 = Aux, 3 = MP3" (shown on the tile and in the alerts); empty = the numbers only
   thresholdDb: -50,
   minSilenceSec: 30,
   yellowDelaySec: 2, // the traffic light of the input stays green until the audio has been below the threshold this long (0 = at once)
@@ -155,6 +156,7 @@ function sanitizeInput(raw, usedIds) {
   i.snmpOid = i.type === 'snmp' && isValidOid(i.snmpOid) ? cleanOid(i.snmpOid) : '';
   i.snmpNormal = i.type === 'snmp' && parseNormal(i.snmpNormal) ? parseNormal(i.snmpNormal).join(', ') : d.snmpNormal;
   i.snmpPollSec = Math.round(clamp(i.snmpPollSec, 1, 600, d.snmpPollSec));
+  i.snmpLabels = i.type === 'snmp' ? formatLabels(i.snmpLabels) : '';
   if (i.type === 'snmp') {
     // an SNMP input has no audio: no yellow delay, no frozen audio, no micro-silences; only the time before the alarm counts
     if (!parseSnmpAddress(i.streamUrl)) i.streamUrl = '';

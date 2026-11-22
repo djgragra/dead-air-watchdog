@@ -5,9 +5,9 @@
 // Only SNMP v1/v2c (a community, sent in clear on the network: use it on a LAN or a VPN, never over the open internet).
 import dgram from 'node:dgram';
 import netSnmp from 'net-snmp';
-import { DEFAULT_PORT, DEFAULT_TRAP_PORT, parseSnmpAddress, buildSnmpAddress, isValidOid, cleanOid, parseNormal } from './core/snmp-address.js';
+import { DEFAULT_PORT, DEFAULT_TRAP_PORT, parseSnmpAddress, buildSnmpAddress, isValidOid, cleanOid, parseNormal, parseLabels, formatLabels, valueText } from './core/snmp-address.js';
 
-export { DEFAULT_PORT, DEFAULT_TRAP_PORT, parseSnmpAddress, buildSnmpAddress, isValidOid, cleanOid, parseNormal };
+export { DEFAULT_PORT, DEFAULT_TRAP_PORT, parseSnmpAddress, buildSnmpAddress, isValidOid, cleanOid, parseNormal, parseLabels, formatLabels, valueText };
 
 const TIMEOUT_MS = 3000;
 

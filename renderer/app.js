@@ -10,7 +10,7 @@ import { viewItems, logoIdFor, PALETTE } from '../src/core/stations.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 import { hasTransparentEdge } from '../src/core/logo-alpha.js';
 import { findCommonProblems } from '../src/core/report.js';
-import { parseSnmpAddress, buildSnmpAddress, isValidOid, parseNormal, DEFAULT_PORT as SNMP_PORT } from '../src/core/snmp-address.js';
+import { parseSnmpAddress, buildSnmpAddress, isValidOid, parseNormal, formatLabels, DEFAULT_PORT as SNMP_PORT } from '../src/core/snmp-address.js';
 
 const api = window.api;
 const $ = (id) => document.getElementById(id);
@@ -21,6 +21,7 @@ const METER_MAX = 0;
 const MAX_INPUTS = 32;
 const SNMP_FAULTS = ['timeout', 'no-such-object', 'not-a-number']; // what the SNMP watcher reports when a poll fails (src/snmp.js)
 const DEVA_OID = '1.3.6.1.4.1.35833.1.3.1.0'; // audioInput of the DEVA DB8000 (its MIB)
+const DEVA_LABELS = '1 = Main, 2 = Aux, 3 = MP3'; // what the DEVA means by its values (its MIB; confirmed on a real DEVA)
 const FAULTS = ['device-ended', 'stream-error', 'stream-ended', 'stream-stalled', 'stream-nostart', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
 
 let settings = null;
@@ -175,16 +176,19 @@ function renderStatus() {
   const overall = status.running ? status.overall : 'idle';
   document.body.dataset.overall = overall;
   $('hero').dataset.state = overall;
-  const word = overall === 'ok' ? t('overall.ok') : t(`st.${overall}`);
+  // only devices (SNMP) at fault: words about a device, not about audio
+  const onlyDevices = (st) => { const l = status.inputs.filter((i) => i.overallState === st); return l.length > 0 && l.every((i) => i.type === 'snmp'); };
+  const devWords = status.running && (overall === 'counting' || overall === 'alarm') && onlyDevices(overall);
+  const word = overall === 'ok' ? t('overall.ok') : devWords ? t(`st.snmp.${overall}`) : t(`st.${overall}`);
   $('heroState').textContent = word;
   $('statePill').dataset.state = overall;
   $('pillText').textContent = word;
   let sub = '';
   if (overall === 'idle') sub = t('st.sub.idle');
   else if (overall === 'starting') sub = t('st.sub.starting');
-  else if (overall === 'ok') sub = t('overall.sub.ok', { n: status.counts.ok || 0 });
-  else if (overall === 'counting') sub = t('overall.sub.counting', { names: namesOf('counting') });
-  else if (overall === 'alarm') sub = t('overall.sub.alarm', { names: namesOf('alarm') });
+  else if (overall === 'ok') sub = t(status.inputs.some((i) => i.overallState === 'ok') && status.inputs.filter((i) => i.overallState === 'ok').every((i) => i.type === 'snmp') ? 'overall.sub.snmpOk' : 'overall.sub.ok', { n: status.counts.ok || 0 });
+  else if (overall === 'counting') sub = t(devWords ? 'overall.sub.snmpCounting' : 'overall.sub.counting', { names: namesOf('counting') });
+  else if (overall === 'alarm') sub = t(devWords ? 'overall.sub.snmpAlarm' : 'overall.sub.alarm', { names: namesOf('alarm') });
   else if (overall === 'paused') sub = t('overall.sub.paused');
   $('heroSub').textContent = sub;
   $('wallState').textContent = overall === 'alarm' ? `${word} · ${namesOf('alarm')}` : overall === 'counting' ? `${word} · ${namesOf('counting')}` : word;
@@ -436,8 +440,8 @@ function updateInputTile(inp, tile, logoId, station, grouped) {
   else if (paused) sub = t('st.sub.paused', { until: new Date(inp.pausedUntil).toLocaleTimeString(localeFor(lang), { hour: '2-digit', minute: '2-digit', hour12: false }) });
   else if (inp.state === 'counting') sub = t(inp.type === 'snmp' ? 'st.sub.snmpCounting' : 'st.sub.counting', { elapsed: formatDuration(inp.elapsedMs), remaining: formatDuration(inp.remainingMs) });
   else if (inp.state === 'alarm') sub = t('st.sub.alarm', { cause: t(`cause.${inp.cause || 'silence'}`), since: new Date(inp.silenceStart).toLocaleTimeString(localeFor(lang), { hour12: false }), elapsed: formatDuration(inp.elapsedMs) });
-  else if (inp.state === 'ok') sub = inp.type === 'snmp' ? t('st.sub.snmpOk', { value: inp.snmpValue ?? '?' }) : t('meter.threshold', { db: inp.thresholdDb });
-  if (inp.type === 'snmp' && inp.snmpValue != null && (inp.state === 'counting' || inp.state === 'alarm')) sub += ` · ${t('st.sub.snmpValue', { value: inp.snmpValue })}`; // what the device says, to set the normal values
+  else if (inp.state === 'ok') sub = inp.type === 'snmp' ? (inp.snmpText && inp.snmpText !== String(inp.snmpValue) ? t('st.sub.snmpOkNamed', { value: inp.snmpText }) : t('st.sub.snmpOk', { value: inp.snmpValue ?? '?' })) : t('meter.threshold', { db: inp.thresholdDb });
+  if (inp.type === 'snmp' && inp.snmpValue != null && (inp.state === 'counting' || inp.state === 'alarm')) sub += ` · ${inp.snmpText && inp.snmpText !== String(inp.snmpValue) ? inp.snmpText : t('st.sub.snmpValue', { value: inp.snmpValue })}`; // what the device says, to set the normal values
   tile.sub.textContent = sub;
   tile.fault.textContent = inp.fault ? t('st.fault', { reason: faultText(inp.fault) }) : '';
   renderTileNowPlaying(tile, inp);
@@ -1481,12 +1485,17 @@ function buildInputCard(inp, open) {
     normal.type = 'text';
     normal.value = inp.snmpNormal || '1';
     normal.spellcheck = false;
+    const labels = el('input', 'in-snmp-labels');
+    labels.type = 'text';
+    labels.value = inp.snmpLabels || '';
+    labels.spellcheck = false;
+    labels.placeholder = DEVA_LABELS;
     const poll = numberInput('in-snmp-poll', 1, 600, inp.snmpPollSec || 5);
     const pollRow = el('span', 'row');
     pollRow.append(poll, tel('span', 'hint', 'adv.sec'));
     const devaHint = tel('p', 'hint in-snmp-devahint', 'set.snmp.hint.deva');
     devaHint.classList.toggle('hidden', preset.value !== 'deva');
-    body.append(labelled('set.snmp.preset', preset), labelled('set.snmp.host', hostRow), labelled('set.snmp.community', comm), labelled('set.snmp.oid', oid), labelled('set.snmp.normal', normal), devaHint, labelled('set.snmp.poll', pollRow), tel('p', 'hint', 'set.snmp.hint'), tel('p', 'warn hidden in-bad', 'set.snmp.bad'));
+    body.append(labelled('set.snmp.preset', preset), labelled('set.snmp.host', hostRow), labelled('set.snmp.community', comm), labelled('set.snmp.oid', oid), labelled('set.snmp.normal', normal), labelled('set.snmp.labels', labels), tel('p', 'hint', 'set.snmp.labels.hint'), devaHint, labelled('set.snmp.poll', pollRow), tel('p', 'hint', 'set.snmp.hint'), tel('p', 'warn hidden in-bad', 'set.snmp.bad'));
     addEye(comm);
   } else if (inp.type === 'stream') {
     const url = el('input', 'in-url');
@@ -1746,7 +1755,7 @@ function renderInputsList() {
 }
 
 function addInput(type, extra = {}) {
-  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', logo: '', channelPair: 0, channelMono: 0, streamUrl: '', snmpOid: '', snmpNormal: '1', snmpPollSec: 5, thresholdDb: -50, minSilenceSec: type === 'snmp' ? 10 : 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
+  const base = { id: uuid(), name: '', type, deviceId: '', deviceLabel: '', logo: '', channelPair: 0, channelMono: 0, streamUrl: '', snmpOid: '', snmpNormal: '1', snmpLabels: '', snmpPollSec: 5, thresholdDb: -50, minSilenceSec: type === 'snmp' ? 10 : 30, yellowDelaySec: 2, frozenSec: 0, frozenToleranceDb: 1, microSilences: 'default', nowPlaying: false, schedule: { enabled: false, rules: [] }, enabled: true };
   const card = buildInputCard({ ...base, ...extra }, true);
   const home = extra.stationId ? document.querySelector(`#stationsList .station-card[data-id="${CSS.escape(extra.stationId)}"] .st-streams`) : null;
   (home || $('inputsList')).appendChild(card);
@@ -1768,7 +1777,7 @@ function readInputs() {
       name: card.querySelector('.in-name').value.trim(),
       enabled: card.querySelector('.in-enabled').checked,
       streamUrl: type === 'stream' ? card.querySelector('.in-url').value.trim() : type === 'snmp' ? buildSnmpAddress({ host: card.querySelector('.in-snmp-host').value.trim(), port: Number(card.querySelector('.in-snmp-port').value) || SNMP_PORT, community: card.querySelector('.in-snmp-community').value }) : '',
-      ...(type === 'snmp' ? { snmpOid: card.querySelector('.in-snmp-oid').value.trim(), snmpNormal: card.querySelector('.in-snmp-normal').value.trim(), snmpPollSec: Number(card.querySelector('.in-snmp-poll').value) || 5 } : {}),
+      ...(type === 'snmp' ? { snmpOid: card.querySelector('.in-snmp-oid').value.trim(), snmpNormal: card.querySelector('.in-snmp-normal').value.trim(), snmpLabels: formatLabels(card.querySelector('.in-snmp-labels').value), snmpPollSec: Number(card.querySelector('.in-snmp-poll').value) || 5 } : {}),
       deviceId,
       deviceLabel: deviceId ? optionName(sel.selectedOptions[0]) : '',
       logo: card._logoId || '',
@@ -1810,6 +1819,7 @@ function onInputsEvent(e) {
     if (tg.value === 'deva') {
       card.querySelector('.in-snmp-oid').value = DEVA_OID;
       card.querySelector('.in-snmp-normal').value = '1';
+      card.querySelector('.in-snmp-labels').value = DEVA_LABELS;
     }
     card.querySelector('.in-snmp-devahint').classList.toggle('hidden', tg.value !== 'deva');
   }
