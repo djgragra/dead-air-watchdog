@@ -9,7 +9,7 @@ import { parseAddresses } from './addresses.js';
 import { TEMPLATE_KINDS, TEMPLATE_LIMITS } from './messages.js';
 import { DEFAULT_SCHEDULE, sanitizeSchedule } from './core/schedule.js';
 import { assignColors, isColor } from './core/stations.js';
-import { parseSnmpAddress, isValidOid, cleanOid, parseNormal, formatLabels, DEFAULT_TRAP_PORT } from './core/snmp-address.js';
+import { parseSnmpAddress, isValidOid, cleanOid, parseNormal, formatLabels, DEFAULT_TRAP_PORT, DEVA_OID, DEVA_LABELS } from './core/snmp-address.js';
 
 export const MAX_INPUTS = 32;
 export const MAX_STATIONS = 32;
@@ -157,6 +157,8 @@ function sanitizeInput(raw, usedIds) {
   i.snmpNormal = i.type === 'snmp' && parseNormal(i.snmpNormal) ? parseNormal(i.snmpNormal).join(', ') : d.snmpNormal;
   i.snmpPollSec = Math.round(clamp(i.snmpPollSec, 1, 600, d.snmpPollSec));
   i.snmpLabels = i.type === 'snmp' ? formatLabels(i.snmpLabels) : '';
+  // a DEVA input saved before the names existed (the key is not there at all) gets the names of the DEVA once; an empty one that the user chose stays empty
+  if (i.type === 'snmp' && i.snmpOid === DEVA_OID && !(isObj(raw) && 'snmpLabels' in raw)) i.snmpLabels = DEVA_LABELS;
   if (i.type === 'snmp') {
     // an SNMP input has no audio: no yellow delay, no frozen audio, no micro-silences; only the time before the alarm counts
     if (!parseSnmpAddress(i.streamUrl)) i.streamUrl = '';

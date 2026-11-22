@@ -9,7 +9,7 @@ import { createMonitor, TICK_MS, isUsable } from '../src/monitor.js';
 import { stripSecrets, mapSecrets } from '../src/secrets.js';
 import { missingSecrets } from '../src/backup.js';
 
-const DEVA = { id: 'd', name: 'DEVA studio', type: 'snmp', streamUrl: 'snmp://DEVA8000@192.168.1.50', snmpOid: '1.3.6.1.4.1.35833.1.3.1.0', snmpNormal: '1', snmpPollSec: 5, minSilenceSec: 10 };
+const DEVA = { id: 'd', name: 'DEVA studio', type: 'snmp', streamUrl: 'snmp://DEVA8000@192.168.1.50', snmpOid: '1.3.6.1.4.1.35833.1.3.1.0', snmpNormal: '1', snmpLabels: '', snmpPollSec: 5, minSilenceSec: 10 }; // no names: the numbers only (the names have their own tests)
 const ASSET = { id: 'a', name: 'Main', type: 'stream', streamUrl: 'http://radio.example.org/live', minSilenceSec: 10 };
 
 function setup(inputs = [DEVA], patch = {}) {
@@ -185,4 +185,15 @@ test('settings: the names are only kept for an SNMP input', () => {
   const s = sanitizeSettings({ inputs: [{ ...DEVA, snmpLabels: '1=Main' }, { id: 's', type: 'stream', streamUrl: 'http://x.example/l', snmpLabels: '1=Main' }] });
   assert.equal(s.inputs[0].snmpLabels, '1 = Main');
   assert.equal(s.inputs[1].snmpLabels, '');
+});
+
+test('a DEVA input saved before the names existed gets them once; one the user emptied stays empty', () => {
+  const { snmpLabels: _omit, ...old } = DEVA;
+  const oldDeva = { ...old, snmpOid: '1.3.6.1.4.1.35833.1.3.1.0' }; // the key is not there: an input saved by an earlier version
+  assert.equal(sanitizeSettings({ inputs: [oldDeva] }).inputs[0].snmpLabels, '1 = Main, 2 = Aux, 3 = MP3');
+  assert.equal(sanitizeSettings({ inputs: [{ ...oldDeva, snmpLabels: '' }] }).inputs[0].snmpLabels, '');
+  assert.equal(sanitizeSettings({ inputs: [{ ...oldDeva, snmpOid: '1.3.6.1.4.1.9999.1.0' }] }).inputs[0].snmpLabels, ''); // another device: nothing guessed
+  // and it stays so after a save and a load
+  const once = sanitizeSettings({ inputs: [oldDeva] });
+  assert.equal(sanitizeSettings(once).inputs[0].snmpLabels, '1 = Main, 2 = Aux, 3 = MP3');
 });

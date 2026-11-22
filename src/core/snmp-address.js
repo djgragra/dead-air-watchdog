@@ -1,5 +1,7 @@
 // SNMP input helpers that need no network and no library (the window uses them too): the address, the OID, the normal values.
 export const DEFAULT_PORT = 161;
+export const DEVA_OID = '1.3.6.1.4.1.35833.1.3.1.0'; // audioInput of the DEVA DB8000 (its MIB)
+export const DEVA_LABELS = '1 = Main, 2 = Aux, 3 = MP3'; // what the DEVA means by its values (its MIB; seen on a real DEVA)
 export const DEFAULT_TRAP_PORT = 1162; // ports below 1024 need extra rights on Linux and macOS
 
 // The address of an SNMP input is kept as snmp://community@host:port so that the community is handled like the

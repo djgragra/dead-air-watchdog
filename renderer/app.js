@@ -10,7 +10,7 @@ import { viewItems, logoIdFor, PALETTE } from '../src/core/stations.js';
 import { formatDuration, formatDateTime, formatDb, localeFor } from '../src/core/format.js';
 import { hasTransparentEdge } from '../src/core/logo-alpha.js';
 import { findCommonProblems } from '../src/core/report.js';
-import { parseSnmpAddress, buildSnmpAddress, isValidOid, parseNormal, formatLabels, DEFAULT_PORT as SNMP_PORT } from '../src/core/snmp-address.js';
+import { parseSnmpAddress, buildSnmpAddress, isValidOid, parseNormal, formatLabels, DEFAULT_PORT as SNMP_PORT, DEVA_OID, DEVA_LABELS } from '../src/core/snmp-address.js';
 
 const api = window.api;
 const $ = (id) => document.getElementById(id);
@@ -20,8 +20,6 @@ const METER_MIN = -80;
 const METER_MAX = 0;
 const MAX_INPUTS = 32;
 const SNMP_FAULTS = ['timeout', 'no-such-object', 'not-a-number']; // what the SNMP watcher reports when a poll fails (src/snmp.js)
-const DEVA_OID = '1.3.6.1.4.1.35833.1.3.1.0'; // audioInput of the DEVA DB8000 (its MIB)
-const DEVA_LABELS = '1 = Main, 2 = Aux, 3 = MP3'; // what the DEVA means by its values (its MIB; confirmed on a real DEVA)
 const FAULTS = ['device-ended', 'stream-error', 'stream-ended', 'stream-stalled', 'stream-nostart', 'NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'ChannelsUnavailable'];
 
 let settings = null;
