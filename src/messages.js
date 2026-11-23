@@ -10,6 +10,14 @@ const MSG = {
     'alarm.subject': '[Dead Air Watchdog] DEAD AIR: {input}',
     'alarm.body': 'Dead air on "{input}".\nCause: {cause}\nStarted: {start}\nThreshold: {threshold} dBFS, alert after {seconds} s.\nAlert sent: {now}\nMachine: {host}',
     'alarm.bodyFrozen': 'Frozen audio on "{input}".\nCause: {cause}\nStarted: {start}\nThe level stayed within {tolerance} dB for {seconds} s, above the threshold of {threshold} dBFS: a steady tone, a stuck loop or constant noise.\nAlert sent: {now}\nMachine: {host}',
+    'cause.snmp': 'the device reports an abnormal state',
+    'cause.unreachable': 'the device does not answer',
+    'alarm.subjectSnmp': '[Dead Air Watchdog] DEVICE ALERT: {input}',
+    'alarm.bodySnmp': 'Alert on the device "{input}".\nCause: {cause}\nStarted: {start}\nAlert after {seconds} s.\nAlert sent: {now}\nMachine: {host}',
+    'reminder.subjectSnmp': '[Dead Air Watchdog] STILL AN ALERT: {input}',
+    'reminder.bodySnmp': 'Still an alert on the device "{input}" for {duration}.\nCause: {cause}\nStarted: {start}\nMachine: {host}',
+    'recovered.subjectSnmp': '[Dead Air Watchdog] Back to normal: {input}',
+    'recovered.bodySnmp': 'The device "{input}" is back to normal.\nFrom {start} to {end}\nDuration: {duration}\nMachine: {host}',
     'reminder.subject': '[Dead Air Watchdog] STILL DEAD AIR: {input}',
     'reminder.body': 'Still dead air on "{input}" for {duration}.\nCause: {cause}\nStarted: {start}\nMachine: {host}',
     'recovered.subject': '[Dead Air Watchdog] Audio back: {input}',
@@ -55,6 +63,7 @@ const MSG = {
     'desktop.alarm': 'Dead air on {input}',
     'desktop.recovered': 'Audio back on {input} after {duration}',
     'input.stream': 'stream {host}',
+    'input.snmp': 'device {host}',
     'input.defaultDevice': 'default audio input'
   },
   it: {
@@ -64,6 +73,14 @@ const MSG = {
     'alarm.subject': '[Dead Air Watchdog] DEAD AIR: {input}',
     'alarm.body': 'Dead air su "{input}".\nCausa: {cause}\nInizio: {start}\nSoglia: {threshold} dBFS, avviso dopo {seconds} s.\nAvviso inviato: {now}\nMacchina: {host}',
     'alarm.bodyFrozen': 'Audio bloccato su "{input}".\nCausa: {cause}\nInizio: {start}\nIl livello è rimasto entro {tolerance} dB per {seconds} s, sopra la soglia di {threshold} dBFS: un tono fisso, un loop bloccato o rumore costante.\nAvviso inviato: {now}\nMacchina: {host}',
+    'cause.snmp': 'l\'apparato segnala uno stato anomalo',
+    'cause.unreachable': 'l\'apparato non risponde',
+    'alarm.subjectSnmp': '[Dead Air Watchdog] ALLARME APPARATO: {input}',
+    'alarm.bodySnmp': 'Allarme sull\'apparato "{input}".\nCausa: {cause}\nInizio: {start}\nAvviso dopo {seconds} s.\nAvviso inviato: {now}\nComputer: {host}',
+    'reminder.subjectSnmp': '[Dead Air Watchdog] ALLARME ANCORA IN CORSO: {input}',
+    'reminder.bodySnmp': 'Allarme ancora in corso sull\'apparato "{input}" da {duration}.\nCausa: {cause}\nInizio: {start}\nComputer: {host}',
+    'recovered.subjectSnmp': '[Dead Air Watchdog] Tornato normale: {input}',
+    'recovered.bodySnmp': 'L\'apparato "{input}" è tornato normale.\nDalle {start} alle {end}\nDurata: {duration}\nComputer: {host}',
     'reminder.subject': '[Dead Air Watchdog] ANCORA DEAD AIR: {input}',
     'reminder.body': 'Ancora dead air su "{input}" da {duration}.\nCausa: {cause}\nInizio: {start}\nMacchina: {host}',
     'recovered.subject': '[Dead Air Watchdog] Audio ripristinato: {input}',
@@ -109,6 +126,7 @@ const MSG = {
     'desktop.alarm': 'Dead air su {input}',
     'desktop.recovered': 'Audio tornato su {input} dopo {duration}',
     'input.stream': 'stream {host}',
+    'input.snmp': 'apparato {host}',
     'input.defaultDevice': 'ingresso audio predefinito'
   },
   es: {
@@ -118,6 +136,14 @@ const MSG = {
     'alarm.subject': '[Dead Air Watchdog] DEAD AIR: {input}',
     'alarm.body': 'Dead air en "{input}".\nCausa: {cause}\nInicio: {start}\nUmbral: {threshold} dBFS, aviso tras {seconds} s.\nAviso enviado: {now}\nEquipo: {host}',
     'alarm.bodyFrozen': 'Audio bloqueado en "{input}".\nCausa: {cause}\nInicio: {start}\nEl nivel se mantuvo dentro de {tolerance} dB durante {seconds} s, por encima del umbral de {threshold} dBFS: un tono fijo, un bucle atascado o ruido constante.\nAviso enviado: {now}\nEquipo: {host}',
+    'cause.snmp': 'el equipo indica un estado anómalo',
+    'cause.unreachable': 'el equipo no responde',
+    'alarm.subjectSnmp': '[Dead Air Watchdog] ALERTA DE EQUIPO: {input}',
+    'alarm.bodySnmp': 'Alerta en el equipo "{input}".\nCausa: {cause}\nInicio: {start}\nAviso tras {seconds} s.\nAviso enviado: {now}\nEquipo: {host}',
+    'reminder.subjectSnmp': '[Dead Air Watchdog] SIGUE LA ALERTA: {input}',
+    'reminder.bodySnmp': 'Sigue la alerta en el equipo "{input}" desde hace {duration}.\nCausa: {cause}\nInicio: {start}\nEquipo: {host}',
+    'recovered.subjectSnmp': '[Dead Air Watchdog] Vuelve a la normalidad: {input}',
+    'recovered.bodySnmp': 'El equipo "{input}" ha vuelto a la normalidad.\nDesde {start} hasta {end}\nDuración: {duration}\nEquipo: {host}',
     'reminder.subject': '[Dead Air Watchdog] SIGUE EL DEAD AIR: {input}',
     'reminder.body': 'Sigue el dead air en "{input}" desde hace {duration}.\nCausa: {cause}\nInicio: {start}\nEquipo: {host}',
     'recovered.subject': '[Dead Air Watchdog] Audio recuperado: {input}',
@@ -163,6 +189,7 @@ const MSG = {
     'desktop.alarm': 'Dead air en {input}',
     'desktop.recovered': 'Audio recuperado en {input} tras {duration}',
     'input.stream': 'stream {host}',
+    'input.snmp': 'equipo {host}',
     'input.defaultDevice': 'entrada de audio predeterminada'
   }
 };
@@ -202,6 +229,10 @@ export function inputOwnLabel(lang, input) {
       /* host stays "?" */
     }
     return t(lang, 'input.stream', { host });
+  }
+  if (input.type === 'snmp') {
+    const m = /^snmp:\/\/(?:[^@/]*@)?([^:/?#]+|\[[^\]]+\])/i.exec(String(input.streamUrl || ''));
+    return t(lang, 'input.snmp', { host: m ? m[1] : '?' });
   }
   return input.deviceLabel || t(lang, 'input.defaultDevice');
 }
@@ -248,7 +279,7 @@ export function buildAlert(lang, kind, d, templates) {
   const when = (ts) => formatDateTime(ts, lang);
   const vars = {
     input: d.input,
-    cause: t(lang, `cause.${d.cause || 'silence'}`),
+    cause: t(lang, `cause.${d.cause || 'silence'}`) + (d.cause === 'snmp' && d.value ? ` [${d.value}]` : ''), // what an SNMP device reported
     start: when(d.start),
     end: d.end ? when(d.end) : '',
     now: when(d.now),
@@ -258,9 +289,10 @@ export function buildAlert(lang, kind, d, templates) {
     duration: formatDuration(d.durationMs ?? 0),
     host: d.host
   };
-  const body = kind === 'alarm' && d.cause === 'frozen' ? 'alarm.bodyFrozen' : `${kind}.body`;
+  const sfx = d.snmp ? 'Snmp' : ''; // an SNMP device has its own texts (no threshold, no audio)
+  const body = kind === 'alarm' && d.cause === 'frozen' ? 'alarm.bodyFrozen' : `${kind}.body${sfx}`;
   const key = kind === 'alarm' && d.cause === 'frozen' ? 'frozen' : kind;
-  return { subject: custom(templates, key, 'subject', vars) ?? t(lang, `${kind}.subject`, vars), text: custom(templates, key, 'body', vars) ?? t(lang, body, vars) };
+  return { subject: custom(templates, key, 'subject', vars) ?? t(lang, `${kind}.subject${sfx}`, vars), text: custom(templates, key, 'body', vars) ?? t(lang, body, vars) };
 }
 
 // One message for several inputs that failed (kind 'alarm') or came back (kind 'recovered') together.

@@ -9,6 +9,7 @@ import { createGrouper } from './grouping.js';
 import { createFrozenDetector } from './core/frozen.js';
 import { activeRule, windowEnd } from './core/schedule.js';
 import { microSilencesOn } from './store.js';
+import { parseSnmpAddress, parseNormal, valueText } from './core/snmp-address.js';
 
 export const TICK_MS = 250;
 const STALE_MS = 1500; // no level report for this long = the input delivers nothing
@@ -18,12 +19,24 @@ const SUSPEND_MS = 10_000; // a pause between ticks longer than this means the p
 const RELEASE_MS = 2000;
 const PRIORITY = { alarm: 4, counting: 3, starting: 2, ok: 1 };
 
-export const isUsable = (inp) => inp.enabled && (inp.type === 'device' || /^https?:\/\/[^\s]+$/i.test(inp.streamUrl || ''));
+export const isUsable = (inp) => inp.enabled && (inp.type === 'device' || (inp.type === 'snmp' ? !!parseSnmpAddress(inp.streamUrl) && !!inp.snmpOid : /^https?:\/\/[^\s]+$/i.test(inp.streamUrl || '')));
+
+// An SNMP input is not opened by the audio engine; its watcher asks the device (src/snmp.js).
+const isSnmp = (inp) => inp?.type === 'snmp';
+const snmpCfg = (i) => ({ id: i.id, address: i.streamUrl, oid: i.snmpOid, pollSec: i.snmpPollSec });
+// What an input was opened with: when it changes the input is opened again and a fault of the old setup is forgotten.
+const openKey = (i) => JSON.stringify(isSnmp(i) ? [snmpCfg(i), i.snmpNormal] : engineInput(i));
+// An SNMP value is turned into a "level" for the detector: normal = 0 (above any threshold), anything else = far below it.
+const SNMP_NORMAL_LEVEL = 0;
+const SNMP_ABNORMAL_LEVEL = -200;
+// The detector knows silence and offline; for a device they are "abnormal state" and "does not answer".
+const causeOf = (inp, cause) => (isSnmp(inp) ? (cause === 'silence' ? 'snmp' : cause === 'offline' ? 'unreachable' : cause) : cause);
+const snmpOk = (inp, value) => (parseNormal(inp.snmpNormal) || [1]).includes(value);
 
 // What the engine needs to open an input (nothing else leaves the settings).
 const engineInput = (i) => ({ id: i.id, type: i.type, deviceId: i.deviceId, channelPair: i.channelPair, channelMono: i.channelMono, streamUrl: i.streamUrl });
 
-export function createMonitor({ store, engine, dispatch, publish, desktopNotify = () => {}, alarmSound = () => {}, now = Date.now, host = 'this machine', log = () => {}, setIntervalFn = setInterval, clearIntervalFn = clearInterval, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) {
+export function createMonitor({ store, engine, snmp = { sync() {}, stop() {}, setTraps() {} }, dispatch, publish, desktopNotify = () => {}, alarmSound = () => {}, now = Date.now, host = 'this machine', log = () => {}, setIntervalFn = setInterval, clearIntervalFn = clearInterval, setTimeoutFn = setTimeout, clearTimeoutFn = clearTimeout }) {
   const chans = new Map(); // input id -> channel state
   let running = false;
   let startedAt = 0;
@@ -55,7 +68,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function makeChannel(inp, t) {
     return {
       id: inp.id,
-      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) }),
+      detector: createDetector({ releaseMs: RELEASE_MS, thresholdDb: inp.thresholdDb, minSilenceMs: inp.minSilenceSec * 1000, yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) && !isSnmp(inp) }),
       frozen: frozenOf(inp), // frozen audio: only fed when the input has frozenSec > 0
       frozenEventId: null,
       eff: effective(inp, t),
@@ -64,7 +77,8 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       lastSampleAt: null,
       windowMax: -Infinity,
       fault: null, // reason string reported by the engine, or null
-      engineKey: JSON.stringify(engineInput(inp)), // what the engine was told to open: when it changes the engine opens it again and a fault of the old setup is forgotten
+      engineKey: openKey(inp), // what the engine (or the SNMP watcher) was told to open: when it changes it is opened again and a fault of the old setup is forgotten
+      snmp: null, // SNMP input: { value, at } of the last answer (or of a trap)
       openEventId: null,
       lastNotifyAt: 0
     };
@@ -78,7 +92,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function alertData(inp, extra) {
     const s = settings();
     const eff = chans.get(inp.id)?.eff || inp;
-    return { input: labelOf(inp), thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
+    return { input: labelOf(inp), snmp: isSnmp(inp), value: isSnmp(inp) ? valueText(chans.get(inp.id)?.snmp?.value, inp.snmpLabels) : undefined, thresholdDb: eff.thresholdDb, minSilenceSec: eff.minSilenceSec, frozenSec: inp.frozenSec, frozenToleranceDb: inp.frozenToleranceDb, host, now: now(), ...extra };
   }
 
   // Several inputs failing (or coming back) together go out as one message (src/grouping.js); a lone one is not delayed.
@@ -113,6 +127,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
   function handleEvent(ch, ev) {
     const inp = inputById(ch.id);
     if (!inp) return;
+    ev = { ...ev, cause: causeOf(inp, ev.cause) };
     if (inp.alerts === 'indicator') return; // only AUDIO YES / NO on the tile: nothing is logged or sent
     const label = labelOf(inp);
     const { thresholdDb, minSilenceSec } = ch.eff;
@@ -200,7 +215,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       return { state: raw === 'starting' ? 'starting' : yes ? 'audio-yes' : 'audio-no', cause: null, fault: ch.fault, elapsedMs: 0, remainingMs: 0, silenceStart: null, thresholdDb: ch.eff.thresholdDb };
     }
     const state = raw === 'counting' && !snap.yellow ? 'ok' : raw;
-    return { state, cause: snap.cause, fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart, thresholdDb: ch.eff.thresholdDb };
+    return { state, cause: causeOf(inputById(ch.id), snap.cause), snmpValue: ch.snmp?.value ?? null, snmpText: ch.snmp ? valueText(ch.snmp.value, inputById(ch.id)?.snmpLabels) : '', fault: ch.fault, elapsedMs: snap.elapsedMs, remainingMs: snap.remainingMs, silenceStart: snap.silenceStart, thresholdDb: ch.eff.thresholdDb };
   }
 
   function status() {
@@ -236,7 +251,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
 
   function emitStatus(force = false) {
     const st = status();
-    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.alerts, i.indicatorCounts, i.state, i.fault, i.cause, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
+    const key = JSON.stringify([st.running, st.inputs.map((i) => [i.id, i.name, i.alerts, i.indicatorCounts, i.state, i.fault, i.cause, i.snmpValue, i.snmpText, i.pausedUntil || 0, i.thresholdDb, i.state === 'counting' || i.state === 'alarm' ? Math.floor(i.elapsedMs / 1000) : 0])]);
     if (force || key !== lastStatusKey) {
       lastStatusKey = key;
       publish.status(st);
@@ -274,7 +289,12 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
     const waitingForFirst = ch.lastSampleAt === null && !ch.fault && t - ch.startedAt < START_GRACE_MS;
     if (!waitingForFirst) {
       const stale = ch.lastSampleAt === null || t - ch.lastSampleAt > STALE_MS;
-      const level = ch.fault || stale || ch.windowMax === -Infinity ? null : ch.windowMax;
+      let level = ch.fault || stale || ch.windowMax === -Infinity ? null : ch.windowMax;
+      if (isSnmp(inp)) {
+        // a device that has not answered for three polls (and at least 15 s) is offline; its last value counts until then
+        const lateMs = Math.max(15_000, inp.snmpPollSec * 3000);
+        level = ch.fault || !ch.snmp || t - ch.snmp.at > lateMs ? null : snmpOk(inp, ch.snmp.value) ? SNMP_NORMAL_LEVEL : SNMP_ABNORMAL_LEVEL;
+      }
       // why a sample without level counts as below: the input is stopped / failed ('nodata'), or the measurement is late ('late')
       const reason = level === null ? (ch.fault ? 'nodata' : 'late') : undefined;
       for (const ev of ch.detector.feed(level, t, reason)) handleEvent(ch, ev);
@@ -394,7 +414,9 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       lastHeartbeat = 0;
       chans.clear();
       for (const inp of list) chans.set(inp.id, makeChannel(inp, startedAt));
-      engine.sync(list.map(engineInput));
+      engine.sync(list.filter((i) => !isSnmp(i)).map(engineInput));
+      snmp.setTraps({ enabled: settings().snmp?.traps !== false, port: settings().snmp?.trapPort });
+      snmp.sync(list.filter(isSnmp).map(snmpCfg));
       timer = setIntervalFn(tick, TICK_MS);
       emitStatus(true);
       return true;
@@ -409,6 +431,7 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       chans.clear();
       grouper.flush(); // alerts still waiting for their window go out now
       engine.stop();
+      snmp.stop();
       if (cleanExit) store.setMeta({ lastHeartbeat: now(), cleanExit: true });
       publish.events();
       emitStatus(true);
@@ -432,9 +455,9 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
         const ch = chans.get(inp.id);
         if (!ch) chans.set(inp.id, makeChannel(inp, t));
         else {
-          const key = JSON.stringify(engineInput(inp));
-          if (key !== ch.engineKey) { ch.engineKey = key; ch.fault = null; } // other device, channel or address: the engine opens it again and reports again if it fails
-          ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) });
+          const key = openKey(inp);
+          if (key !== ch.engineKey) { ch.engineKey = key; ch.fault = null; ch.snmp = null; ch.lastSampleAt = null; ch.startedAt = t; } // other device, channel or address: the engine opens it again and reports again if it fails
+          ch.detector.configure({ yellowDelayMs: inp.yellowDelaySec * 1000, blips: microSilencesOn(settings(), inp) && !isSnmp(inp) });
           ch.frozen.configure({ frozenMs: (inp.frozenSec || 0) * 1000, toleranceDb: inp.frozenToleranceDb });
           if (!inp.frozenSec) {
             const ended = ch.frozen.reset(t);
@@ -446,7 +469,9 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
           ch.detector.configure({ thresholdDb: eff.thresholdDb, minSilenceMs: eff.minSilenceSec * 1000 });
         }
       }
-      engine.sync(list.map(engineInput));
+      engine.sync(list.filter((i) => !isSnmp(i)).map(engineInput));
+      snmp.setTraps({ enabled: settings().snmp?.traps !== false, port: settings().snmp?.trapPort });
+      snmp.sync(list.filter(isSnmp).map(snmpCfg));
       emitStatus(true);
     },
 
@@ -486,7 +511,30 @@ export function createMonitor({ store, engine, dispatch, publish, desktopNotify 
       emitStatus(true);
     },
 
-    engineList: () => activeInputs().map(engineInput),
+    // The answer of an SNMP device: { value, at } or { error }. A trap carries the value too (onSnmpTrap), the next poll confirms it.
+    onSnmp(id, res) {
+      const ch = chans.get(id);
+      if (!ch) return;
+      ch.lastSampleAt = now();
+      if (res?.error) {
+        ch.fault = res.error;
+        return emitStatus(true);
+      }
+      ch.fault = null;
+      ch.snmp = { value: res.value, at: res.at ?? now() };
+      emitStatus();
+    },
+
+    onSnmpTrap(id, value) {
+      const ch = chans.get(id);
+      if (!ch || value === null || value === undefined) return;
+      ch.lastSampleAt = now();
+      ch.fault = null;
+      ch.snmp = { value, at: now() };
+      emitStatus();
+    },
+
+    engineList: () => activeInputs().filter((i) => !isSnmp(i)).map(engineInput),
     tick,
     status,
     isRunning: () => running
