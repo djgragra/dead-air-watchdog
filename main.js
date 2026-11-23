@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage, nativeTheme, Notification, shell, session, systemPreferences, safeStorage, powerSaveBlocker, net, screen } from 'electron';
+import { app, BrowserWindow, Tray, Menu, ipcMain, dialog, nativeImage, nativeTheme, Notification, shell, session, systemPreferences, safeStorage, powerSaveBlocker, net, screen, globalShortcut } from 'electron';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -22,6 +22,8 @@ import { EngineSupervisor, findEngine, engineProblem } from './src/engine-client
 import { createEngineBridge } from './src/engine-bridge.js';
 import { resolveDevice } from './src/devices.js';
 import { createSnmpWatcher } from './src/snmp.js';
+import { createAlarmSound } from './src/alarm-sound.js';
+import { createTelegramCommands } from './src/telegram-commands.js';
 import { aggregateDeadAir } from './src/core/stats.js';
 import { buildReport, findCommonProblems, periodRange, reportToCsv } from './src/core/report.js';
 import { toCsv, toJson } from './src/core/export.js';
@@ -55,8 +57,10 @@ let nowPlaying;
 let snmpWatcher = null;
 let logos;
 let wallBlockerId = null;
-let soundActive = false;
-let soundMuted = false;
+let alarmSound = null; // the audible alarm: when it sounds, calms down, is silenced (src/alarm-sound.js)
+let tgCommands = null; // /silenzia from Telegram (src/telegram-commands.js)
+let shortcutKey = ''; // the global key combination that is registered now
+let shortcutState = { state: 'off' };
 let baseStatus = null;
 let mainWindow = null;
 // The audio is measured by the engine, a separate program written in Rust (engine/), started and kept alive by the
@@ -385,7 +389,7 @@ function updateTray(status) {
   const overall = status?.running ? status.overall : 'idle';
   const state = overall === 'starting' || overall === 'paused' ? 'idle' : overall;
   const wv = store.getSettings().window;
-  const key = `${state}|${status?.running}|${lang()}|${status?.inputs?.length ?? 0}|${wv.compact}|${wv.alwaysOnTop}|${wv.hideMenuBar}`;
+  const key = `${state}|${status?.running}|${!!status?.soundPlaying}|${lang()}|${status?.inputs?.length ?? 0}|${wv.compact}|${wv.alwaysOnTop}|${wv.hideMenuBar}`;
   if (key === trayKey) return;
   trayKey = key;
   tray.setImage(trayImage(state));
@@ -395,6 +399,7 @@ function updateTray(status) {
     Menu.buildFromTemplate([
       { label: t(lang(), 'tray.open'), click: showWindow },
       { label: status?.running ? t(lang(), 'tray.stop') : t(lang(), 'tray.start'), click: () => (status?.running ? stopMonitoring() : startMonitoring()) },
+      { label: t(lang(), 'tray.mute'), enabled: !!status?.soundPlaying, click: () => muteAlarm() },
       { type: 'separator' },
       { label: t(lang(), 'tray.compact'), type: 'checkbox', checked: wv.compact, click: () => toggleWindowView('compact') },
       { label: t(lang(), 'tray.top'), type: 'checkbox', checked: wv.alwaysOnTop, click: () => toggleWindowView('alwaysOnTop') },
@@ -446,22 +451,46 @@ function applyKeepAwake() {
 
 // Audible alarm: played by the sound window (always alive), stopped by recovery or by the user.
 function applySound() {
-  const snd = store.getSettings().notifications.sound;
-  sendSound({ on: soundActive && !soundMuted && snd.enabled, volume: snd.volume });
+  alarmSound?.refresh();
 }
 
 function setAlarmSound(on) {
-  soundActive = on;
-  if (on) soundMuted = false;
-  applySound();
-  pushStatus();
+  alarmSound?.setActive(on);
+}
+
+// Silenced by the user (button, tray, shortcut or Telegram): quiet until a new alarm. True if something was sounding.
+function muteAlarm() {
+  return alarmSound ? alarmSound.mute() : false;
+}
+
+// The global key combination that silences the alarm (Settings → Alerts): registered with the system, also with the window hidden.
+function applyShortcut() {
+  const want = store.getSettings().notifications.sound.shortcut;
+  if (want === shortcutKey) return;
+  if (shortcutKey) globalShortcut.unregister(shortcutKey);
+  shortcutKey = '';
+  shortcutState = { state: 'off' };
+  if (!want) return;
+  let ok = false;
+  try {
+    ok = globalShortcut.register(want, () => muteAlarm());
+  } catch {
+    ok = false; // not a valid combination
+  }
+  if (ok) {
+    shortcutKey = want;
+    shortcutState = { state: 'active', accelerator: want };
+  } else {
+    shortcutState = { state: 'error', accelerator: want };
+    clog(`the shortcut "${want}" could not be registered (not valid, or used by another program)`, 'warn', 'shortcut');
+  }
 }
 
 // What the window gets: the monitor's status plus the state of the audible alarm.
 function pushStatus(st = baseStatus) {
   if (!st) return;
   baseStatus = st;
-  lastStatus = { ...st, soundPlaying: soundActive && !soundMuted && store.getSettings().notifications.sound.enabled };
+  lastStatus = { ...st, soundPlaying: alarmSound ? alarmSound.sounding() : false };
   sendUi('event:status', lastStatus);
   updateTray(lastStatus);
 }
@@ -539,6 +568,7 @@ function registerIpc() {
     heartbeat.restart();
     applyKeepAwake();
     applySound();
+    applyShortcut();
     pushStatus();
     trayKey = '';
     updateTray(lastStatus);
@@ -630,10 +660,9 @@ function registerIpc() {
   });
 
   handle('alarm:mute', () => {
-    soundMuted = true;
-    applySound();
-    pushStatus();
+    muteAlarm();
   });
+  handle('shortcut:state', () => shortcutState);
   handle('audio:test-sound', (volume) => {
     sendSound({ on: true, test: true, volume });
   });
@@ -895,6 +924,11 @@ app.whenReady().then(() => {
       sendUi('event:delivery', faultList());
     },
     log: (m, level) => clog(m, level, 'notify') });
+  alarmSound = createAlarmSound({
+    send: sendSound,
+    getSound: () => store.getSettings().notifications.sound,
+    onChange: () => pushStatus()
+  });
   // SNMP inputs: the watcher asks the devices (and takes their traps) and tells the monitor
   snmpWatcher = createSnmpWatcher({
     onResult: (id, r) => monitor?.onSnmp(id, r),
@@ -924,7 +958,7 @@ app.whenReady().then(() => {
   ipcMain.on('sound:ready', (e) => {
     if (!soundWin || soundWin.isDestroyed() || e.sender !== soundWin.webContents) return;
     soundReady = true;
-    applySound();
+    alarmSound?.resend(); // the sound window starts knowing nothing
   });
 
   heartbeat = createHeartbeat({ getSettings: () => store.getSettings(), fetchFn: (u, o) => net.fetch(u, o), version: app.getVersion(), log: (m, level) => clog(m, level, 'heartbeat') });
@@ -937,6 +971,15 @@ app.whenReady().then(() => {
     log: (m, level) => clog(m, level, 'now-playing')
   });
   nowPlaying.start();
+  tgCommands = createTelegramCommands({
+    getSettings: () => store.getSettings(),
+    isActive: () => monitor.isRunning(),
+    fetchFn: (u, o) => net.fetch(u, o),
+    onMute: muteAlarm,
+    log: (m, level) => clog(m, level, 'telegram')
+  });
+  tgCommands.start();
+  applyShortcut();
   registerIpc();
   createSoundWindow();
   startEngine();
@@ -976,6 +1019,9 @@ app.on('before-quit', () => {
     heartbeat?.stop();
     nowPlaying?.stop();
     snmpWatcher?.stop();
+    tgCommands?.stop();
+    alarmSound?.stop();
+    globalShortcut.unregisterAll();
     dispatcher?.cancelPending();
     engineBridge?.shutdown();
     store?.flush();

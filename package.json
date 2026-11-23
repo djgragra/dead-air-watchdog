@@ -1,7 +1,7 @@
 {
   "name": "dead-air-watchdog",
   "productName": "Dead Air Watchdog",
-  "version": "26.11.5",
+  "version": "26.11.6",
   "description": "Monitors sound cards and Icecast/Shoutcast streams with a native audio engine and alerts by email and Telegram when they stay silent",
   "main": "main.js",
   "type": "module",

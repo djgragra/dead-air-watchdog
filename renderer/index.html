@@ -255,14 +255,21 @@
         <div class="tabpane" data-pane="alerts">
         <fieldset class="card">
           <legend data-i18n="set.n.title">Alerts</legend>
-          <div class="cols">
-            <label class="check"><input type="checkbox" id="nDesktop" /><span data-i18n="set.n.desktop">Show a desktop notification</span></label>
-            <label class="field"><span data-i18n="set.n.reminder">Repeat the alert every (minutes, 0 = never)</span><input type="number" id="nReminder" min="0" max="1440" step="1" inputmode="numeric" class="num" /></label>
-          </div>
+          <label class="check"><input type="checkbox" id="nDesktop" /><span data-i18n="set.n.desktop">Show a desktop notification</span></label>
           <label class="check"><input type="checkbox" id="nSound" /><span data-i18n="set.snd.enable">Play an alarm sound on this computer while dead air lasts</span></label>
           <div class="row"><label class="field"><span data-i18n="set.snd.volume">Alarm volume</span><input type="range" id="nVol" min="5" max="100" step="5" /></label><button type="button" class="btn btn--small" id="sndTest" data-i18n="set.snd.test">Test sound</button></div>
+          <div class="cols">
+            <label class="field"><span data-i18n="set.snd.continuous">Continuous sound for (minutes, 0 = until the alarm ends)</span><input type="number" id="nSndCont" min="0" max="1440" step="1" inputmode="numeric" class="num" /></label>
+            <label class="field"><span data-i18n="set.snd.repeat">then one beep every (minutes, 0 = then silent)</span><input type="number" id="nSndRepeat" min="0" max="1440" step="1" inputmode="numeric" class="num" /></label>
+            <label class="field"><span data-i18n="set.snd.key">Key combination that silences the sound (empty = none)</span><input type="text" id="nSndKey" spellcheck="false" autocomplete="off" placeholder="Ctrl+Alt+M" /></label>
+          </div>
+          <p class="hint" id="nSndKeyState" role="status"></p>
           <p class="hint" data-i18n="set.snd.hint"></p>
           <p class="hint" data-i18n="set.n.local"></p>
+
+          <h3 data-i18n="set.rem.title">Messages (email, Telegram, HTTP)</h3>
+          <label class="field"><span data-i18n="set.n.reminder">Repeat the message every (minutes, 0 = never)</span><input type="number" id="nReminder" min="0" max="1440" step="1" inputmode="numeric" class="num" /></label>
+          <p class="hint" data-i18n="set.rem.hint"></p>
 
           <h3 data-i18n="set.mail.title">Email (SMTP)</h3>
           <label class="check"><input type="checkbox" id="mEnable" /><span data-i18n="set.mail.enable">Send email alerts</span></label>
@@ -283,6 +290,8 @@
           <label class="field"><span data-i18n="set.tg.token">Bot token</span><input type="password" id="tToken" spellcheck="false" autocomplete="new-password" placeholder="123456789:AA..." data-pw /></label>
           <div class="field"><span data-i18n="set.tg.recipients">Recipients (chat IDs)</span><div id="tRecipients"></div>
             <button type="button" class="btn btn--small" id="tAdd" data-i18n="set.tg.add">Add recipient</button></div>
+          <label class="check"><input type="checkbox" id="tCmd" /><span data-i18n="set.tg.commands">Let these chats silence the alarm sound by sending /silenzia (or /mute) to the bot</span></label>
+          <p class="hint" data-i18n="set.tg.commands.hint"></p>
           <div class="row"><button type="button" class="btn btn--small" id="tTest" data-i18n="set.test">Send test</button><span class="testres" id="tRes" role="status"></span></div>
 
           <h3 data-i18n="set.wh.title">HTTP (webhook)</h3>

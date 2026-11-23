@@ -2035,6 +2035,19 @@ function addRecipientRow(r = { chatId: '', note: '' }) {
   $('tRecipients').appendChild(row);
 }
 
+// Is the key combination that silences the alarm registered with the system? (empty: none)
+async function refreshShortcutState() {
+  let st = { state: 'off' };
+  try {
+    st = (await api.monitor.shortcutState()) || st;
+  } catch {
+    /* the text says "not active" */
+  }
+  const el = $('nSndKeyState');
+  el.textContent = st.state === 'active' ? t('set.snd.key.active', { key: st.accelerator }) : st.state === 'error' ? t('set.snd.key.error', { key: st.accelerator }) : '';
+  el.classList.toggle('hidden', st.state === 'off');
+}
+
 // Where the trap listener is (SNMP inputs): listening on a port, off, or the reason it cannot listen.
 async function refreshTrapState() {
   let st = { state: 'off' };
@@ -2059,6 +2072,10 @@ function fillForm() {
   $('nReminder').value = s.notifications.reminderMin;
   $('nSound').checked = s.notifications.sound.enabled;
   $('nVol').value = Math.round(s.notifications.sound.volume * 100);
+  $('nSndCont').value = s.notifications.sound.continuousMin;
+  $('nSndRepeat').value = s.notifications.sound.repeatMin;
+  $('nSndKey').value = s.notifications.sound.shortcut;
+  refreshShortcutState();
   $('hEnable').checked = s.heartbeat.enabled;
   $('hUrl').value = s.heartbeat.url;
   $('hMin').value = s.heartbeat.intervalMin;
@@ -2077,6 +2094,7 @@ function fillForm() {
   const tg = s.notifications.telegram;
   $('tEnable').checked = tg.enabled;
   $('tToken').value = tg.botToken;
+  $('tCmd').checked = tg.commands === true;
   const wh = s.notifications.webhook;
   $('wEnable').checked = wh.enabled;
   $('wUrl').value = wh.url;
@@ -2147,9 +2165,9 @@ function readForm() {
     notifications: {
       desktop: $('nDesktop').checked,
       reminderMin: Number($('nReminder').value) || 0,
-      sound: { enabled: $('nSound').checked, volume: (Number($('nVol').value) || 60) / 100 },
+      sound: { enabled: $('nSound').checked, volume: (Number($('nVol').value) || 60) / 100, continuousMin: Number($('nSndCont').value) || 0, repeatMin: $('nSndRepeat').value === '' ? 10 : Number($('nSndRepeat').value) || 0, shortcut: $('nSndKey').value.trim() },
       email: { enabled: $('mEnable').checked, host: $('mHost').value.trim(), port: Number($('mPort').value) || 587, secure: $('mSecure').checked, user: $('mUser').value.trim(), pass: $('mPass').value, from: $('mFrom').value.trim(), recipients: parseAddresses($('mTo').value).valid },
-      telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients },
+      telegram: { enabled: $('tEnable').checked, botToken: $('tToken').value.trim(), recipients, commands: $('tCmd').checked },
       webhook: { enabled: $('wEnable').checked, url: $('wUrl').value.trim(), method: $('wMethod').value, authHeader: $('wAuth').value.trim() },
       updateAlert: $('uAlert').checked,
       templates: tplDraft,

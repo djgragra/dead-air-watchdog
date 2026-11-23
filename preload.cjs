@@ -20,7 +20,8 @@ contextBridge.exposeInMainWorld('api', {
     status: () => invoke('monitor:status'),
     muteAlarm: () => invoke('alarm:mute'),
     nowPlaying: () => invoke('nowplaying:get'),
-    snmpTrapState: () => invoke('snmp:trap-state')
+    snmpTrapState: () => invoke('snmp:trap-state'),
+    shortcutState: () => invoke('shortcut:state')
   },
   events: {
     list: () => invoke('events:list'),
