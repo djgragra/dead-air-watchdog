@@ -41,6 +41,12 @@
     sndTimer = setInterval(() => beep(v), 1200); // 0.36 s of sound, 0.84 s of silence
     if (testMs) sndStop = setTimeout(soundOff, testMs);
   }
-  api.onSound((msg) => (msg.on ? soundOn(msg.volume, msg.test ? 3000 : 0) : soundOff()));
+  // one two-burst reminder (the alarm has calmed down: a beep every few minutes while it lasts)
+  function beepOnce(volume) {
+    const v = Math.min(1, Math.max(0.05, Number(volume) || 0.6));
+    beep(v);
+    setTimeout(() => beep(v), 1200);
+  }
+  api.onSound((msg) => (msg.beep ? beepOnce(msg.volume) : msg.on ? soundOn(msg.volume, msg.test ? 3000 : 0) : soundOff()));
   api.ready();
 })();

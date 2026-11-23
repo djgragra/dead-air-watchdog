@@ -68,9 +68,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   notifications: {
     desktop: true,
     reminderMin: 0, // 0 = no reminders while the alarm lasts
-    sound: { enabled: false, volume: 0.6 }, // audible alarm on this computer while dead air lasts
+    sound: { enabled: false, volume: 0.6, continuousMin: 0, repeatMin: 10, shortcut: '' }, // audible alarm on this computer while dead air lasts; continuousMin: minutes of continuous sound, then one beep every repeatMin minutes (0 = continuous until the alarm ends; repeatMin 0 = then silent); shortcut: a global key combination that silences it ('' = none)
     email: { enabled: false, host: '', port: 587, secure: false, user: '', pass: '', from: '', recipients: [] }, // recipients: [address], all sent in Bcc
-    telegram: { enabled: false, botToken: '', recipients: [] }, // recipients: [{ chatId, note }]
+    telegram: { enabled: false, botToken: '', recipients: [], commands: false }, // recipients: [{ chatId, note }]; commands: the recipients can silence the alarm sound with /silenzia (src/telegram-commands.js)
     webhook: { enabled: false, url: '', method: 'POST', authHeader: '' }, // one HTTP request per alert (src/webhook.js); url and authHeader are secrets
     templates: {}, // wording of the alerts chosen by the user: { alarm|frozen|reminder|recovered|groupAlarm|groupRecovered: { subject, body } }; empty = the text of the app
     updateAlert: true, // tell by email / Telegram, once per version, that a new version is out
@@ -227,6 +227,9 @@ export function sanitizeSettings(s) {
   out.notifications.reminderMin = Math.round(clamp(out.notifications.reminderMin, 0, 1440, 0));
   out.notifications.sound.enabled = !!out.notifications.sound.enabled;
   out.notifications.sound.volume = Math.round(clamp(out.notifications.sound.volume, 0.05, 1, 0.6) * 100) / 100;
+  out.notifications.sound.continuousMin = Math.round(clamp(out.notifications.sound.continuousMin, 0, 1440, 0));
+  out.notifications.sound.repeatMin = Math.round(clamp(out.notifications.sound.repeatMin, 0, 1440, 10));
+  out.notifications.sound.shortcut = /^[A-Za-z0-9+_ -]{1,40}$/.test(String(out.notifications.sound.shortcut || '').trim()) ? String(out.notifications.sound.shortcut).trim() : ''; // an Electron accelerator such as Ctrl+Alt+M
   out.heartbeat.enabled = !!out.heartbeat.enabled;
   out.heartbeat.url = String(out.heartbeat.url || '').trim().slice(0, 2000);
   out.heartbeat.intervalMin = Math.round(clamp(out.heartbeat.intervalMin, 1, 60, 5));
@@ -237,6 +240,7 @@ export function sanitizeSettings(s) {
   em.recipients = parseAddresses([...(Array.isArray(em.recipients) ? em.recipients : [em.recipients]), em.to]).valid;
   delete em.to;
   out.notifications.updateAlert = out.notifications.updateAlert !== false;
+  out.notifications.telegram.commands = out.notifications.telegram.commands === true;
   const rec = Array.isArray(out.notifications.telegram.recipients) ? out.notifications.telegram.recipients : [];
   out.notifications.telegram.recipients = rec
     .map((r) => ({ chatId: String(r?.chatId ?? '').trim(), note: String(r?.note ?? '').trim().slice(0, 80) }))
