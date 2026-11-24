@@ -7,7 +7,7 @@ Free desktop app (Windows / macOS / Linux) that listens around the clock to the 
 By Graziano Melzi · [OnAir Garage](https://onairgarage.com) — contact: hello@onairgarage.com
 
 - Tool page: https://onairgarage.com/tools/dead-air-watchdog/
-- Systems: Windows (installer), macOS (dmg, Apple silicon and Intel), Linux (AppImage, x64). The builds come from the release workflow; see "Not validated" below for what has and has not been run.
+- Systems: Windows (installer), macOS (dmg, Apple silicon and Intel), Linux (AppImage or .deb, x64). The builds come from the release workflow; see "Not validated" below for what has and has not been run.
 - License: MIT (see `LICENSE`)
 - Categories: Monitoring (primary), On-Air, Streaming
 
@@ -79,7 +79,7 @@ The **user manual** is attached to every release as three PDFs: English (`Dead-A
 
 - **macOS**: the app is signed ad hoc (no Apple account), so the first start says "unidentified developer": open *System Settings → Privacy & Security*, scroll down and click *Open Anyway* (tested on an Apple Silicon Mac from 26.10.9; earlier versions said "damaged"). **Second method**, in Terminal: `xattr -cr "/Applications/Dead Air Watchdog.app" && codesign --force --deep -s - "/Applications/Dead Air Watchdog.app"` (it also opens an earlier version that says "damaged"; change the name to open another OnAir Garage app).
 - **Windows**: if SmartScreen appears, click *More info* → *Run anyway*.
-- **Linux**: install the system libraries first: **libasound2** (the audio engine is linked to it, even for streams only) and FUSE for AppImages: Debian/Ubuntu `sudo apt install libasound2 libfuse2` (Ubuntu 24.04, Debian 13: `libasound2t64 libfuse2t64`), Fedora `sudo dnf install alsa-lib fuse-libs`, Arch `sudo pacman -S alsa-lib fuse2`. Then `chmod +x Dead-Air-Watchdog-*.AppImage` and run it. Without libasound2 the app opens and a red banner explains it.
+- **Linux**: install the system libraries first: **libasound2** (the audio engine is linked to it, even for streams only) and FUSE for AppImages: Debian/Ubuntu `sudo apt install libasound2 libfuse2` (Ubuntu 24.04, Debian 13: `libasound2t64 libfuse2t64`), Fedora `sudo dnf install alsa-lib fuse-libs`, Arch `sudo pacman -S alsa-lib fuse2`. Then `chmod +x Dead-Air-Watchdog-*.AppImage` and run it. On Debian/Ubuntu you can use the **.deb** instead: `sudo apt install ./Dead-Air-Watchdog-<version>.deb` (it installs the libraries it needs, no FUSE). "Start with the computer" writes `~/.config/autostart/dead-air-watchdog.desktop`. Without libasound2 the app opens and a red banner explains it.
 
 ### Why it asks for the microphone
 
