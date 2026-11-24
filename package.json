@@ -1,7 +1,7 @@
 {
   "name": "dead-air-watchdog",
   "productName": "Dead Air Watchdog",
-  "version": "26.11.6",
+  "version": "26.11.7",
   "description": "Monitors sound cards and Icecast/Shoutcast streams with a native audio engine and alerts by email and Telegram when they stay silent",
   "main": "main.js",
   "type": "module",
@@ -63,11 +63,11 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "icon": "assets/linux-icons",
-      "category": "Utility",
-      "artifactName": "Dead-Air-Watchdog-${version}.AppImage"
+      "category": "Utility"
     },
     "nsis": {
       "oneClick": false,
@@ -84,6 +84,24 @@
         "from": "engine/dist/${os}-${arch}",
         "to": "engine"
       }
-    ]
+    ],
+    "appImage": {
+      "artifactName": "Dead-Air-Watchdog-${version}.AppImage"
+    },
+    "deb": {
+      "artifactName": "Dead-Air-Watchdog-${version}.deb",
+      "depends": [
+        "libasound2 | libasound2t64",
+        "libgtk-3-0 | libgtk-3-0t64",
+        "libnss3",
+        "libxss1 | libxss1t64",
+        "libxtst6",
+        "libnotify4",
+        "xdg-utils",
+        "libatspi2.0-0 | libatspi2.0-0t64",
+        "libuuid1",
+        "libsecret-1-0"
+      ]
+    }
   }
 }

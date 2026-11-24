@@ -4,6 +4,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
+import { applyAutostart } from './src/autostart.js';
 import { createStore, COMPACT_MIN, NORMAL_MIN, compactHeightFor } from './src/store.js';
 import { createMonitor, isUsable } from './src/monitor.js';
 import { createDispatcher, sendEmail, sendTelegram } from './src/notifications.js';
@@ -332,7 +333,7 @@ function createWindow() {
     if (!url.startsWith('file://')) e.preventDefault();
   });
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-  const hidden = settings.general.startMinimized && app.getLoginItemSettings().wasOpenedAtLogin;
+  const hidden = settings.general.startMinimized && (app.getLoginItemSettings().wasOpenedAtLogin || process.argv.includes('--autostart'));
   mainWindow.once('ready-to-show', () => {
     if (settings.window.maximized && !compactApplied) mainWindow.maximize();
     restoreMenuBar();
@@ -498,7 +499,12 @@ function pushStatus(st = baseStatus) {
 function applyGeneralSettings(s) {
   nativeTheme.themeSource = s.theme === 'auto' ? 'system' : s.theme;
   // never register the development Electron binary as a login item
-  if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: !!s.general.startOnBoot, openAsHidden: true });
+  if (app.isPackaged) {
+    if (process.platform === 'linux') {
+      // Electron does nothing for login items on Linux: the XDG autostart entry is written by the app (src/autostart.js)
+      try { applyAutostart(!!s.general.startOnBoot); } catch (e) { clog(`autostart: ${e.message}`, 'warn'); }
+    } else app.setLoginItemSettings({ openAtLogin: !!s.general.startOnBoot, openAsHidden: true });
+  }
   applyKeepAwake();
 }
 

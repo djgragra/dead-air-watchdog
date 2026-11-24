@@ -92,7 +92,9 @@ jobs:
           - os: ubuntu-latest
             name: linux
             command: npm run dist:linux
-            artifact: release/*.AppImage
+            artifact: |
+              release/*.AppImage
+              release/*.deb
     runs-on: ${{ matrix.os }}
     defaults:
       run:

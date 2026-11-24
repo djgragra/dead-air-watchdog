@@ -44,13 +44,18 @@ function releaseAssets(repo, rel) {
 }
 
 // Windows setup .exe, macOS .dmg for this processor (arm64, or Intel: "-x64" or no suffix, as 26.10.2 and
-// older were named), Linux .AppImage (x64 only).
-export function pickInstaller(assets, platform = process.platform, arch = process.arch) {
+// older were named), Linux .AppImage or .deb (x64 only).
+export function pickInstaller(assets, platform = process.platform, arch = process.arch, appImage = !!process.env.APPIMAGE) {
   const tests = {
     win32: (n) => new RegExp(`^${PRODUCT}-Setup-[\\d.]+\\.exe$`, 'i').test(n),
     darwin: (n) => new RegExp(`^${PRODUCT}-[\\d.]+${arch === 'arm64' ? '-arm64' : '(-x64)?'}\\.dmg$`, 'i').test(n),
     linux: (n) => arch === 'x64' && new RegExp(`^${PRODUCT}-[\\d.]+\\.AppImage$`, 'i').test(n)
   };
+  // Linux: run from an AppImage -> the AppImage; installed from the .deb -> the .deb (the AppImage if a release has no .deb)
+  if (platform === 'linux' && arch === 'x64' && !appImage) {
+    const deb = assets.find((a) => new RegExp(`^${PRODUCT}-[\\d.]+\\.deb$`, 'i').test(a.name));
+    if (deb) return deb;
+  }
   const test = tests[platform];
   return (test && assets.find((a) => test(a.name))) || null;
 }

@@ -65,3 +65,12 @@ test('the update check always asks this version\'s own repository, never the rep
   const { DEFAULT_SETTINGS } = await import('../src/store.js');
   assert.equal(DEFAULT_SETTINGS.general.updateRepo, REPO);
 });
+
+test('Linux: AppImage when run from one, .deb when installed', async () => {
+  const { pickInstaller } = await import('../src/updater.js');
+  const A = (name) => ({ name });
+  const assets = ['Dead-Air-Watchdog-26.11.7.AppImage', 'Dead-Air-Watchdog-26.11.7.deb'].map(A);
+  assert.match(pickInstaller(assets, 'linux', 'x64', true).name, /AppImage$/);
+  assert.match(pickInstaller(assets, 'linux', 'x64', false).name, /\.deb$/);
+  assert.match(pickInstaller([A('Dead-Air-Watchdog-26.11.6.AppImage')], 'linux', 'x64', false).name, /AppImage$/);
+});

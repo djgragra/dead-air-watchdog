@@ -1,5 +1,10 @@
 # Changelog
 
+## 26.11.7 — 2026-11-24
+
+- **"Start with the computer" now works on Linux.** Until now the option did nothing there: the app now writes the standard autostart entry (`~/.config/autostart/dead-air-watchdog.desktop`) when it is on and removes it when it is off; with *Start minimized* the window stays hidden at login. The entry is rewritten at every start, so a new AppImage in another folder is picked up. A file with that name that the app did not write is never touched. Thanks to Remco for finding it.
+- **A `.deb` package for Linux** (Ubuntu, Debian and derivatives) next to the AppImage: `sudo apt install ./Dead-Air-Watchdog-26.11.7.deb` installs the app in the menu and brings the libraries it needs. The built-in update check offers the `.deb` to an installed copy and the AppImage to one run from an AppImage. Thanks to Remco for asking.
+
 ## 26.11.6 — 2026-11-23
 
 - **The alarm sound calms down by itself.** *Settings → Alerts → Continuous sound for (minutes)* and *then one beep every (minutes)*: with 5 and 10 the alarm sounds without a break for 5 minutes and then gives one beep every 10 minutes for as long as it lasts, instead of beeping for hours (a monitor in an office, an input that is down for a known reason). A new alarm starts the continuous sound again; the red light, the tile and the messages do not change. With 0 (the default) the sound is continuous until the alarm ends, as before; with *then one beep every* at 0 it goes silent after the first period.
